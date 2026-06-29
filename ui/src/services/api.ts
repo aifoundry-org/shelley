@@ -26,6 +26,24 @@ async function responseError(response: Response, prefix: string): Promise<Error>
   return new Error(`${prefix}: ${detail}`);
 }
 
+export interface SubscriptionProviderStatus {
+  logged_in: boolean;
+  status: string;
+  expires_at?: string;
+}
+
+export interface SubscriptionsStatus {
+  credentials_path: string;
+  providers: Record<"anthropic" | "openai", SubscriptionProviderStatus>;
+}
+
+export interface SubscriptionLoginStart {
+  session_id: string;
+  authorize_url?: string;
+  verification_url?: string;
+  user_code?: string;
+}
+
 export interface AvailableModel {
   id: string;
   display_name?: string;
@@ -81,6 +99,58 @@ class ApiService {
       throw await responseError(response, "Failed to refresh models");
     }
     return response.json();
+  }
+
+  async getSubscriptions(): Promise<SubscriptionsStatus> {
+    const response = await fetch(`${this.baseUrl}/subscriptions`);
+    if (!response.ok) {
+      throw await responseError(response, "Failed to get subscriptions");
+    }
+    return response.json();
+  }
+
+  async logoutSubscription(provider: "anthropic" | "openai"): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/subscriptions/${provider}/logout`, {
+      method: "POST",
+      headers: this.postHeaders,
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to log out");
+    }
+  }
+
+  async startSubscriptionLogin(provider: "anthropic" | "openai"): Promise<SubscriptionLoginStart> {
+    const response = await fetch(`${this.baseUrl}/subscriptions/${provider}/login/start`, {
+      method: "POST",
+      headers: this.postHeaders,
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to start login");
+    }
+    return response.json();
+  }
+
+  async pollOpenAISubscriptionLogin(sessionId: string): Promise<{ done: boolean }> {
+    const response = await fetch(`${this.baseUrl}/subscriptions/openai/login/poll`, {
+      method: "POST",
+      headers: this.postHeaders,
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to poll login");
+    }
+    return response.json();
+  }
+
+  async completeAnthropicSubscriptionLogin(sessionId: string, code: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/subscriptions/anthropic/login/complete`, {
+      method: "POST",
+      headers: this.postHeaders,
+      body: JSON.stringify({ session_id: sessionId, code }),
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to complete login");
+    }
   }
 
   async getTools(): Promise<{
