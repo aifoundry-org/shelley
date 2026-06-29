@@ -67,14 +67,14 @@ func NewService(cfg ServiceConfig) llm.Service {
 	switch cfg.APIType {
 	case APITypeAnthropicMessages:
 		return &ant.Service{
-			URL: cfg.URL, APIKey: cfg.APIKey, HTTPC: cfg.HTTPC,
+			URL: cfg.URL, Auth: ant.APIKeyAuth{Key: cfg.APIKey}, HTTPC: cfg.HTTPC,
 			Model: cfg.Model, SupportsImages_: cfg.SupportsImages, MaxTokens: cfg.MaxTokens,
 			ThinkingLevel: llm.ThinkingLevelMedium, EnableThinkingBinding: cfg.ThinkingBinding,
 			DisableReasoning: cfg.DisableReasoning,
 		}
 	case APITypeOpenAIResponses:
 		return &oai.ResponsesService{
-			ModelURL: cfg.URL, APIKey: cfg.APIKey, HTTPC: cfg.HTTPC,
+			ModelURL: cfg.URL, Auth: oai.APIKeyAuth{Key: cfg.APIKey}, HTTPC: cfg.HTTPC,
 			Model: oaiModel, MaxTokens: cfg.MaxTokens, ProviderName: cfg.ProviderName,
 			ThinkingLevel: llm.ThinkingLevelMedium, ReasoningEffort: cfg.ReasoningEffort,
 			ReasoningReplay: cfg.ReasoningReplay, DisableReasoning: cfg.DisableReasoning,
