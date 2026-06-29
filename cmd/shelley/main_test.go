@@ -98,8 +98,8 @@ func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	// Anthropic models must resolve to the subscription source (highest priority).
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude subscription" {
-		t.Fatalf("claude-opus-4.8 source = %q, want Claude subscription", src)
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude/ChatGPT subscription" {
+		t.Fatalf("claude-opus-4.8 source = %q, want Claude/ChatGPT subscription", src)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
 	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, logger)
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude subscription" {
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT subscription" {
 		t.Fatal("subscription source present despite no stored credentials")
 	}
 }
