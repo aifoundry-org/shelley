@@ -181,7 +181,7 @@ type Service struct {
 	ReasoningOverride     *modelsdev.ReasoningCapabilities
 	HTTPC                 *http.Client      // defaults to http.DefaultClient if nil
 	URL                   string            // defaults to DefaultURL if empty
-	APIKey                string            // must be non-empty
+	Auth                  Authorizer        // must be non-nil; supplies credentials
 	Model                 string            // defaults to DefaultModel if empty
 	MaxTokens             int               // 0 uses the catalog limit, or the named unknown-model default
 	ThinkingLevel         llm.ThinkingLevel // service-level default; ThinkingLevelDefault (zero) means "none configured"
@@ -1359,7 +1359,9 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 			return nil, errors.Join(errs, err)
 		}
 
-		s.setHeaders(req, request)
+		if err := s.setHeaders(ctx, req, request); err != nil {
+			return nil, errors.Join(errs, err)
+		}
 
 		resp, err := httpc.Do(req)
 		if err != nil {
@@ -1450,13 +1452,20 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 	}
 }
 
-func (s *Service) setHeaders(req *http.Request, request *request) {
+func (s *Service) setHeaders(ctx context.Context, req *http.Request, request *request) error {
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", s.APIKey)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
-	if request.Thinking != nil && request.Thinking.BlockBinding != nil {
-		req.Header.Set("Anthropic-Beta", thinkingBindingBeta)
+	if err := s.Auth.SetAuth(ctx, req.Header); err != nil {
+		return fmt.Errorf("set auth: %w", err)
 	}
+	beta := append([]string(nil), s.Auth.BetaHeaders()...)
+	if request.Thinking != nil && request.Thinking.BlockBinding != nil {
+		beta = append(beta, thinkingBindingBeta)
+	}
+	if len(beta) > 0 {
+		req.Header.Set("Anthropic-Beta", strings.Join(beta, ","))
+	}
+	return nil
 }
 
 // CacheTTL is the lifetime of the default "ephemeral" cache_control.
@@ -1486,7 +1495,9 @@ func (s *Service) WarmCache(ctx context.Context, ir *llm.Request) (llm.Usage, er
 	if err != nil {
 		return llm.Usage{}, err
 	}
-	s.setHeaders(req, request)
+	if err := s.setHeaders(ctx, req, request); err != nil {
+		return llm.Usage{}, err
+	}
 	resp, err := cmp.Or(s.HTTPC, http.DefaultClient).Do(req)
 	if err != nil {
 		return llm.Usage{}, err
@@ -1519,6 +1530,6 @@ func (s *Service) ConfigDetails() map[string]string {
 	return map[string]string{
 		"url":             url,
 		"model":           model,
-		"has_api_key_set": fmt.Sprintf("%v", s.APIKey != ""),
+		"has_api_key_set": fmt.Sprintf("%v", s.Auth != nil && s.Auth.HasCredential()),
 	}
 }
