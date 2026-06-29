@@ -735,6 +735,47 @@ func TestResponsesServiceDoSendsMaxOutputTokens(t *testing.T) {
 	}
 }
 
+// TestResponsesServiceDoOmitsMaxOutputTokensForCodexOAuth verifies that the
+// ChatGPT subscription (Codex) OAuth path does NOT send max_output_tokens: the
+// Codex backend rejects that parameter with HTTP 400 ("Unsupported
+// parameter"), and the real Codex CLI never sends it.
+func TestResponsesServiceDoOmitsMaxOutputTokensForCodexOAuth(t *testing.T) {
+	var gotReq map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode req: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(responsesResponse{
+			ID:     "responses-test",
+			Status: "completed",
+			Model:  "test-model",
+			Output: []responsesOutputItem{{Type: "message", Role: "assistant", Content: []responsesContent{{Type: "output_text", Text: "ok"}}}},
+			Usage:  responsesUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		})
+	}))
+	defer server.Close()
+
+	svc := &ResponsesService{
+		Auth:     OAuthAuth{Tokens: fakeTokenProvider{tok: "acc-tok", accountID: "acct-1"}},
+		Model:    modelForTest("test-model"),
+		ModelURL: server.URL,
+	}
+
+	_, err := svc.Do(context.Background(), &llm.Request{
+		Messages: []llm.Message{{
+			Role:    llm.MessageRoleUser,
+			Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	if _, present := gotReq["max_output_tokens"]; present {
+		t.Fatalf("max_output_tokens must be omitted for Codex OAuth, got %#v; body = %#v", gotReq["max_output_tokens"], gotReq)
+	}
+}
+
 func TestResponsesServiceDo(t *testing.T) {
 	// Create a mock Responses server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
