@@ -19,6 +19,7 @@ func TestAnthropicAuthorizeURL(t *testing.T) {
 	}
 	q := u.Query()
 	checks := map[string]string{
+		"code":                  "true",
 		"response_type":         "code",
 		"client_id":             anthropicClientID,
 		"redirect_uri":          anthropicRedirectURI,
