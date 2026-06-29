@@ -73,6 +73,7 @@
           @edit-file="props.onOpenFileFinder?.()"
           @open-mcp-servers="props.onOpenMcpServersModal?.()"
           @check-version="openVersionModal"
+          @models-changed="refreshModels"
           @new-conversation="onNewConversationClick"
         >
           <button
@@ -4558,27 +4559,31 @@ async function handleRefreshModels() {
   }
 }
 
+async function refreshModels() {
+  const [modelsResult, providersResult] = await Promise.allSettled([
+    api.getModels(),
+    modelProvidersApi.list(),
+  ]);
+  if (modelsResult.status === "fulfilled") {
+    models.value = modelsResult.value;
+    if (window.__SHELLEY_INIT__) window.__SHELLEY_INIT__.models = modelsResult.value;
+  } else {
+    console.error("Failed to refresh models:", modelsResult.reason);
+  }
+  if (providersResult.status === "fulfilled") {
+    providerIds.value = providersResult.value.map((provider) => provider.provider_id);
+  } else {
+    // A failed list request is not evidence that any saved account was removed.
+    console.error("Failed to load model providers:", providersResult.reason);
+  }
+}
+
 // The stream announces the catalog on connection and after changes.
 watch(
   () => props.modelsRefreshTrigger,
   async (trigger) => {
     if (!trigger) return;
-    const [modelsResult, providersResult] = await Promise.allSettled([
-      api.getModels(),
-      modelProvidersApi.list(),
-    ]);
-    if (modelsResult.status === "fulfilled") {
-      models.value = modelsResult.value;
-      if (window.__SHELLEY_INIT__) window.__SHELLEY_INIT__.models = modelsResult.value;
-    } else {
-      console.error("Failed to refresh models:", modelsResult.reason);
-    }
-    if (providersResult.status === "fulfilled") {
-      providerIds.value = providersResult.value.map((provider) => provider.provider_id);
-    } else {
-      // A failed list request is not evidence that any saved account was removed.
-      console.error("Failed to load model providers:", providersResult.reason);
-    }
+    await refreshModels();
   },
   { immediate: true },
 );
