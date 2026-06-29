@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"shelley.exe.dev/llm"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/modelsources"
 	"shelley.exe.dev/slug"
@@ -101,6 +102,56 @@ func TestToolModelsHideUnknownIntegrationModelsButKeepCustomModels(t *testing.T)
 	got := setupToolSetConfig(nil, provider).BuildAvailableModels()
 	if len(got) != 2 || got[0].ID != "gpt-5.6-sol" || got[1].ID != "my-custom-model" {
 		t.Fatalf("available tool models = %+v, want known and custom models", got)
+	}
+}
+
+func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
+	oldDiscover := discoverLLMIntegrations
+	discoverLLMIntegrations = func(context.Context, *http.Client, *slog.Logger) modelsources.LLMIntegrationDiscoveryResult {
+		return modelsources.LLMIntegrationDiscoveryResult{}
+	}
+	t.Cleanup(func() { discoverLLMIntegrations = oldDiscover })
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("FIREWORKS_API_KEY", "")
+
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	store := &oauth.Store{Path: credPath}
+	if err := store.Save("anthropic", oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, logger)
+	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
+
+	// Anthropic models must resolve to the subscription source (highest priority).
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude subscription" {
+		t.Fatalf("claude-opus-4.8 source = %q, want Claude subscription", src)
+	}
+}
+
+func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
+	oldDiscover := discoverLLMIntegrations
+	discoverLLMIntegrations = func(context.Context, *http.Client, *slog.Logger) modelsources.LLMIntegrationDiscoveryResult {
+		return modelsources.LLMIntegrationDiscoveryResult{}
+	}
+	t.Cleanup(func() { discoverLLMIntegrations = oldDiscover })
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("FIREWORKS_API_KEY", "")
+
+	credPath := filepath.Join(t.TempDir(), "credentials.json") // no file written
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, logger)
+	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
+
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude subscription" {
+		t.Fatal("subscription source present despite no stored credentials")
 	}
 }
 
