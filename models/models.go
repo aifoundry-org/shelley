@@ -144,7 +144,7 @@ type Config struct {
 // per-API-type paths like "/v1" or "/v1/messages".
 func antSvc(modelName string) func(baseURL, apiKey string, httpc *http.Client) llm.Service {
 	return func(baseURL, apiKey string, httpc *http.Client) llm.Service {
-		s := &ant.Service{APIKey: apiKey, Model: modelName, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium, SupportsImages_: true}
+		s := &ant.Service{Auth: ant.APIKeyAuth{Key: apiKey}, Model: modelName, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium, SupportsImages_: true}
 		if baseURL != "" {
 			s.URL = baseURL + "/v1/messages"
 		}
@@ -827,7 +827,7 @@ func (m *Manager) createServiceFromModel(model *generated.Model) llm.Service {
 	switch model.ProviderType {
 	case "anthropic":
 		service = &ant.Service{
-			APIKey:          model.ApiKey,
+			Auth:            ant.APIKeyAuth{Key: model.ApiKey},
 			URL:             model.Endpoint,
 			Model:           model.ModelName,
 			HTTPC:           m.httpc,

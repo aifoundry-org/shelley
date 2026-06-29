@@ -489,7 +489,7 @@ func (s *Server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 	switch req.ProviderType {
 	case "anthropic":
 		service = &ant.Service{
-			APIKey:        req.APIKey,
+			Auth:          ant.APIKeyAuth{Key: req.APIKey},
 			URL:           req.Endpoint,
 			Model:         req.ModelName,
 			ThinkingLevel: llm.ThinkingLevelMedium,

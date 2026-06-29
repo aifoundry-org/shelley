@@ -32,7 +32,7 @@ func TestCustomModelWithThinking(t *testing.T) {
 
 	// Create a service with thinking enabled
 	service := &ant.Service{
-		APIKey:        apiKey,
+		Auth:          ant.APIKeyAuth{Key: apiKey},
 		Model:         ant.Claude46Opus,
 		ThinkingLevel: llm.ThinkingLevelMedium,
 	}
