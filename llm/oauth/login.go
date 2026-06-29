@@ -67,6 +67,52 @@ func (f *AnthropicLoginFlow) Complete(ctx context.Context, codeState string) err
 	return f.Store.Save("anthropic", tok)
 }
 
+// OpenAILoginFlow drives a single interactive Codex/ChatGPT OAuth login.
+type OpenAILoginFlow struct {
+	Store *Store
+	HTTPC *http.Client
+
+	pkce    PKCE
+	state   string
+	tokenEP string // overridable for tests
+}
+
+// NewOpenAILoginFlow builds a login flow with a fresh PKCE pair and state.
+func NewOpenAILoginFlow(store *Store, httpc *http.Client) *OpenAILoginFlow {
+	if httpc == nil {
+		httpc = http.DefaultClient
+	}
+	p, err := NewPKCE()
+	if err != nil {
+		panic(fmt.Sprintf("generate PKCE: %v", err))
+	}
+	return &OpenAILoginFlow{
+		Store:   store,
+		HTTPC:   httpc,
+		pkce:    p,
+		state:   randomState(),
+		tokenEP: openAITokenEP,
+	}
+}
+
+// AuthorizeURL returns the URL the user opens in a browser to authorize.
+func (f *OpenAILoginFlow) AuthorizeURL() string {
+	return OpenAIAuthorizeURL(f.pkce, f.state)
+}
+
+// Complete exchanges the authorization code for tokens and persists them.
+func (f *OpenAILoginFlow) Complete(ctx context.Context, code string) error {
+	tokenEP := f.tokenEP
+	if tokenEP == "" {
+		tokenEP = openAITokenEP
+	}
+	tok, err := openAIExchange(ctx, f.HTTPC, tokenEP, code, f.pkce)
+	if err != nil {
+		return err
+	}
+	return f.Store.Save("openai", tok)
+}
+
 // Status returns a human-readable login status for provider given the store.
 func Status(store *Store, provider string, now time.Time) string {
 	tok, err := store.Load(provider)
