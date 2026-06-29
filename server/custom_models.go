@@ -519,7 +519,7 @@ func (s *Server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		}
 	case "openai-responses":
 		service = &oai.ResponsesService{
-			APIKey: req.APIKey,
+			Auth: oai.APIKeyAuth{Key: req.APIKey},
 			Model: oai.Model{
 				UserName:           "",
 				ModelName:          req.ModelName,
