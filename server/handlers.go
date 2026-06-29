@@ -33,6 +33,8 @@ import (
 	"shelley.exe.dev/db/generated"
 	"shelley.exe.dev/gitstate"
 	"shelley.exe.dev/llm"
+	"shelley.exe.dev/llm/llmhttp"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/models/modelsdev"
 	"shelley.exe.dev/slug"
@@ -3270,34 +3272,46 @@ func (s *Server) handleDismissUpgradePrompt(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleModelRefresh refreshes the non-custom model catalog and returns the
+// errRefreshNotConfigured means the server has no model refresher; the
+// refresh endpoint reports it as 501 Not Implemented.
+var errRefreshNotConfigured = errors.New("model refresh is not configured")
+
+// refreshModels refreshes the non-custom model catalog and returns the
 // same shape as GET /api/models.
-func (s *Server) handleModelRefresh(w http.ResponseWriter, r *http.Request) {
+func (s *Server) refreshModels(ctx context.Context) ([]ModelInfo, error) {
 	if s.refreshBuiltModels == nil {
-		http.Error(w, "model refresh is not configured", http.StatusNotImplemented)
-		return
+		return nil, errRefreshNotConfigured
 	}
 	refresher, ok := s.llmManager.(builtModelRefresher)
 	if !ok {
-		http.Error(w, "model manager does not support refresh", http.StatusInternalServerError)
-		return
+		return nil, errors.New("model manager does not support refresh")
 	}
-	builtModels, err := s.refreshBuiltModels(r.Context())
+	builtModels, err := s.refreshBuiltModels(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	if err := refresher.RefreshBuiltModels(builtModels); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	s.notifyModelsChanged()
 	modelList := s.getModelList()
-	if err := s.hideDismissedUpgrades(r.Context(), modelList); err != nil {
-		s.internalError(w, "Failed to read dismissed upgrades", err)
-		return
+	if err := s.hideDismissedUpgrades(ctx, modelList); err != nil {
+		return nil, fmt.Errorf("read dismissed upgrades: %w", err)
 	}
 	markDefaultModel(modelList, s.effectiveDefaultModel(modelList))
+	return modelList, nil
+}
+
+func (s *Server) handleModelRefresh(w http.ResponseWriter, r *http.Request) {
+	modelList, err := s.refreshModels(r.Context())
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRefreshNotConfigured) {
+			status = http.StatusNotImplemented
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
 	writeJSON(w, http.StatusOK, modelList)
 }
 
@@ -4671,4 +4685,193 @@ func (s *Server) scheduleExit(code int) {
 		s.logger.Info("Exiting Shelley", "exit_code", code)
 		s.exitProcess(code)
 	})
+}
+
+type subscriptionProviderStatus struct {
+	LoggedIn  bool   `json:"logged_in"`
+	Status    string `json:"status"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type subscriptionsResponse struct {
+	CredentialsPath string                                `json:"credentials_path"`
+	Providers       map[string]subscriptionProviderStatus `json:"providers"`
+}
+
+type subscriptionLoginSession struct {
+	Provider string
+	OpenAI   *oauth.OpenAIDeviceFlow
+	Device   *oauth.DeviceAuth
+	Claude   *oauth.AnthropicLoginFlow
+}
+
+func (s *Server) subscriptionStore() *oauth.Store {
+	path := s.credentialsPath
+	if path == "" {
+		path = oauth.DefaultCredentialsPath()
+	}
+	return &oauth.Store{Path: path}
+}
+
+func validSubscriptionProvider(provider string) bool {
+	return provider == "anthropic" || provider == "openai"
+}
+
+func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	store := s.subscriptionStore()
+	now := time.Now()
+	resp := subscriptionsResponse{
+		CredentialsPath: store.Path,
+		Providers:       map[string]subscriptionProviderStatus{},
+	}
+	for _, provider := range []string{"anthropic", "openai"} {
+		st := subscriptionProviderStatus{Status: oauth.Status(store, provider, now)}
+		if tok, err := store.Load(provider); err == nil {
+			st.LoggedIn = true
+			st.ExpiresAt = tok.ExpiresAt.Format(time.RFC3339)
+		}
+		resp.Providers[provider] = st
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleSubscriptionLogout(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if !validSubscriptionProvider(provider) {
+		http.Error(w, "unsupported provider", http.StatusBadRequest)
+		return
+	}
+	if err := s.subscriptionStore().Delete(provider); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.refreshModels(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleSubscriptionLoginStart(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if !validSubscriptionProvider(provider) {
+		http.Error(w, "unsupported provider", http.StatusBadRequest)
+		return
+	}
+	store := s.subscriptionStore()
+	sessionID := randomSessionID()
+	sess := subscriptionLoginSession{Provider: provider}
+	resp := map[string]string{"session_id": sessionID}
+	if provider == "openai" {
+		flow := oauth.NewOpenAIDeviceFlow(store, llmhttp.NewClient(nil))
+		device, err := flow.Start(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		sess.OpenAI = flow
+		sess.Device = device
+		resp["verification_url"] = device.VerificationURL
+		resp["user_code"] = device.UserCode
+	} else {
+		flow := oauth.NewAnthropicLoginFlow(store, llmhttp.NewClient(nil))
+		sess.Claude = flow
+		resp["authorize_url"] = flow.AuthorizeURL()
+	}
+	s.subscriptionSessionsMu.Lock()
+	s.subscriptionSessions[sessionID] = sess
+	s.subscriptionSessionsMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+type subscriptionLoginRequest struct {
+	SessionID string `json:"session_id"`
+	Code      string `json:"code"`
+}
+
+func (s *Server) handleSubscriptionLoginPoll(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if provider != "openai" {
+		http.Error(w, "poll is only supported for openai", http.StatusBadRequest)
+		return
+	}
+	var req subscriptionLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.subscriptionSessionsMu.Lock()
+	sess, ok := s.subscriptionSessions[req.SessionID]
+	s.subscriptionSessionsMu.Unlock()
+	if !ok || sess.Provider != provider || sess.OpenAI == nil || sess.Device == nil {
+		http.Error(w, "login session not found", http.StatusNotFound)
+		return
+	}
+	done, err := sess.OpenAI.TryPoll(r.Context(), sess.Device)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !done {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"done": false})
+		return
+	}
+	s.subscriptionSessionsMu.Lock()
+	delete(s.subscriptionSessions, req.SessionID)
+	s.subscriptionSessionsMu.Unlock()
+	if _, err := s.refreshModels(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"done": true})
+}
+
+func (s *Server) handleSubscriptionLoginComplete(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if provider != "anthropic" {
+		http.Error(w, "complete is only supported for anthropic", http.StatusBadRequest)
+		return
+	}
+	var req subscriptionLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.subscriptionSessionsMu.Lock()
+	sess, ok := s.subscriptionSessions[req.SessionID]
+	s.subscriptionSessionsMu.Unlock()
+	if !ok || sess.Provider != provider || sess.Claude == nil {
+		http.Error(w, "login session not found", http.StatusNotFound)
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		http.Error(w, "code is required", http.StatusBadRequest)
+		return
+	}
+	if err := sess.Claude.Complete(r.Context(), strings.TrimSpace(req.Code)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.subscriptionSessionsMu.Lock()
+	delete(s.subscriptionSessions, req.SessionID)
+	s.subscriptionSessionsMu.Unlock()
+	if _, err := s.refreshModels(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func randomSessionID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Errorf("generate login session id: %w", err))
+	}
+	return hex.EncodeToString(buf)
 }

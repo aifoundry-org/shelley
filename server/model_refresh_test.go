@@ -241,6 +241,15 @@ func TestHandleModelRefreshReturnsRefreshedModels(t *testing.T) {
 	}
 }
 
+func TestHandleModelRefreshNotConfigured(t *testing.T) {
+	s := &Server{}
+	rec := httptest.NewRecorder()
+	s.handleModelRefresh(rec, httptest.NewRequest(http.MethodPost, "/api/models/refresh", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
 func TestHandleModelsAssignsTiers(t *testing.T) {
 	mgr, err := models.NewManager(&models.Config{
 		Models: []models.Built{

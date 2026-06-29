@@ -152,19 +152,28 @@ func (f *OpenAIDeviceFlow) Poll(ctx context.Context, da *DeviceAuth) error {
 		if err := f.wait(ctx); err != nil {
 			return err
 		}
-		code, done, err := f.pollOnce(ctx, da)
+		done, err := f.TryPoll(ctx, da)
 		if err != nil {
 			return err
 		}
-		if !done {
-			continue
+		if done {
+			return nil
 		}
-		tok, err := f.exchange(ctx, code)
-		if err != nil {
-			return err
-		}
-		return f.Store.Save("openai", tok)
 	}
+}
+
+// TryPoll makes one poll. done=false means "keep polling" (still pending).
+// When done=true, tokens have been exchanged and saved.
+func (f *OpenAIDeviceFlow) TryPoll(ctx context.Context, da *DeviceAuth) (bool, error) {
+	code, done, err := f.pollOnce(ctx, da)
+	if err != nil || !done {
+		return done, err
+	}
+	tok, err := f.exchange(ctx, code)
+	if err != nil {
+		return false, err
+	}
+	return true, f.Store.Save("openai", tok)
 }
 
 // pollOnce makes one poll. done=false means "keep polling" (still pending).

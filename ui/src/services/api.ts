@@ -157,6 +157,24 @@ function withMcpSelections(request: ChatRequest): ChatRequest {
   };
 }
 
+export interface SubscriptionProviderStatus {
+  logged_in: boolean;
+  status: string;
+  expires_at?: string;
+}
+
+export interface SubscriptionsStatus {
+  credentials_path: string;
+  providers: Record<"anthropic" | "openai", SubscriptionProviderStatus>;
+}
+
+export interface SubscriptionLoginStart {
+  session_id: string;
+  authorize_url?: string;
+  verification_url?: string;
+  user_code?: string;
+}
+
 export interface AvailableModel {
   id: string;
   display_name?: string;
@@ -289,6 +307,32 @@ class ApiService {
 
   async refreshModels(): Promise<AvailableModel[]> {
     return apiJSON("/api/models/refresh", "Failed to refresh models", "POST");
+  }
+
+  async getSubscriptions(): Promise<SubscriptionsStatus> {
+    return apiJSON("/api/subscriptions", "Failed to get subscriptions");
+  }
+
+  async logoutSubscription(provider: "anthropic" | "openai"): Promise<void> {
+    await apiFetch(`/api/subscriptions/${provider}/logout`, "Failed to log out", sendJSON("POST"));
+  }
+
+  async startSubscriptionLogin(provider: "anthropic" | "openai"): Promise<SubscriptionLoginStart> {
+    return apiJSON(`/api/subscriptions/${provider}/login/start`, "Failed to start login", "POST");
+  }
+
+  async pollOpenAISubscriptionLogin(sessionId: string): Promise<{ done: boolean }> {
+    return apiJSON("/api/subscriptions/openai/login/poll", "Failed to poll login", "POST", {
+      session_id: sessionId,
+    });
+  }
+
+  async completeAnthropicSubscriptionLogin(sessionId: string, code: string): Promise<void> {
+    await apiFetch(
+      "/api/subscriptions/anthropic/login/complete",
+      "Failed to complete login",
+      sendJSON("POST", { session_id: sessionId, code }),
+    );
   }
 
   async getTools(): Promise<{
