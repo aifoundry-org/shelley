@@ -16,6 +16,7 @@ import (
 	"shelley.exe.dev/client"
 	"shelley.exe.dev/db"
 	"shelley.exe.dev/llm/llmhttp"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/modelsources"
 	"shelley.exe.dev/server"
@@ -34,6 +35,7 @@ type GlobalConfig struct {
 	DefaultModel          string
 	DisableLLMIntegration bool
 	DisableGateway        bool
+	CredentialsPath       string // OAuth credential store; defaults to oauth.DefaultCredentialsPath()
 }
 
 var discoverLLMIntegrations = modelsources.DiscoverLLMIntegrations
@@ -424,6 +426,13 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, logger *slog
 
 	var sources []modelsources.Source
 
+	// 0. Subscription (Claude OAuth). Highest priority: if the user has logged
+	// in with `shelley login anthropic`, Anthropic models are served from their
+	// subscription rather than via API keys/gateway.
+	if src, ok := subscriptionSource(global, logger); ok {
+		sources = append(sources, src)
+	}
+
 	// 1. exe.dev LLM integrations.
 	var integs []*modelsources.LLMIntegrationConfig
 	llmIntegrationFound := false
@@ -489,6 +498,22 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, logger *slog
 	// 4. Predictable always available.
 	sources = append(sources, modelsources.Predictable())
 	return defaultModel, sources
+}
+
+// subscriptionSource returns a Subscription model source if the user has stored
+// Claude OAuth credentials, else ok=false.
+func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.Source, bool) {
+	credPath := global.CredentialsPath
+	if credPath == "" {
+		credPath = oauth.DefaultCredentialsPath()
+	}
+	store := &oauth.Store{Path: credPath}
+	if _, err := store.Load("anthropic"); err != nil {
+		return modelsources.Source{}, false
+	}
+	logger.Info("Using Claude subscription credentials", "path", credPath)
+	ts := oauth.NewAnthropicTokenSource(store, llmhttp.NewClient(nil))
+	return modelsources.Subscription(ts), true
 }
 
 // runModels prints the materialized list of built-in models the server
