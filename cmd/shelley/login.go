@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -25,13 +26,26 @@ func parseLoginArgs(args []string) (string, error) {
 	}
 }
 
-// loginFlow is the provider-agnostic shape of an interactive OAuth login.
-type loginFlow interface {
-	AuthorizeURL() string
-	Complete(ctx context.Context, code string) error
+// vendorName returns the human-readable vendor label for the ToS warning.
+func vendorName(provider string) string {
+	if provider == "anthropic" {
+		return "Claude / Anthropic"
+	}
+	return "ChatGPT / OpenAI"
+}
+
+// printToSWarning warns the user that subscription auth in a non-official
+// client is undocumented and may violate the provider's terms of service.
+func printToSWarning(provider string) {
+	fmt.Printf("WARNING: Using a %s subscription from a non-official client is\n", vendorName(provider))
+	fmt.Println("undocumented and may violate the provider's terms of service. Proceed at")
+	fmt.Println("your own risk.")
+	fmt.Println()
 }
 
 // runLogin runs the interactive OAuth login flow for a subscription provider.
+// OpenAI uses the Codex device-code flow (no localhost callback); Anthropic
+// uses the paste-the-code browser flow.
 func runLogin(args []string) {
 	provider, err := parseLoginArgs(args)
 	if err != nil {
@@ -41,21 +55,13 @@ func runLogin(args []string) {
 	store := &oauth.Store{Path: oauth.DefaultCredentialsPath()}
 	httpc := llmhttp.NewClient(nil)
 
-	var flow loginFlow
-	var vendor string
-	switch provider {
-	case "anthropic":
-		flow = oauth.NewAnthropicLoginFlow(store, httpc)
-		vendor = "Claude / Anthropic"
-	case "openai":
-		flow = oauth.NewOpenAILoginFlow(store, httpc)
-		vendor = "ChatGPT / OpenAI"
+	if provider == "openai" {
+		runDeviceLogin(store, httpc)
+		return
 	}
 
-	fmt.Printf("WARNING: Using a %s subscription from a non-official client is\n", vendor)
-	fmt.Println("undocumented and may violate the provider's terms of service. Proceed at")
-	fmt.Println("your own risk.")
-	fmt.Println()
+	printToSWarning(provider)
+	flow := oauth.NewAnthropicLoginFlow(store, httpc)
 	fmt.Println("1. Open this URL in your browser and approve access:")
 	fmt.Println()
 	fmt.Println("   " + flow.AuthorizeURL())
@@ -80,6 +86,42 @@ func runLogin(args []string) {
 		fmt.Fprintf(os.Stderr, "login failed: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Println("Logged in. Credentials saved to " + store.Path)
+}
+
+// runDeviceLogin runs the OpenAI Codex device-code login: print a URL + short
+// code, then poll until the user approves in a browser.
+func runDeviceLogin(store *oauth.Store, httpc *http.Client) {
+	printToSWarning("openai")
+	flow := oauth.NewOpenAIDeviceFlow(store, httpc)
+
+	// The device code expires server-side (typically 15 minutes); bound the
+	// whole flow generously and let polling run until the user approves.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	da, err := flow.Start(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "device login failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Sign in with Device Code:")
+	fmt.Println()
+	fmt.Println("1. Open this link in your browser and sign in:")
+	fmt.Println("   " + da.VerificationURL)
+	fmt.Println()
+	fmt.Println("2. Enter this one-time code (expires in ~15 minutes):")
+	fmt.Println("   " + da.UserCode)
+	fmt.Println()
+	fmt.Println("Device codes are a common phishing target. Never share this code.")
+	fmt.Println()
+	fmt.Print("Waiting for authorization...")
+
+	if err := flow.Poll(ctx, da); err != nil {
+		fmt.Fprintf(os.Stderr, "\ndevice login failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(" done.")
 	fmt.Println("Logged in. Credentials saved to " + store.Path)
 }
 
