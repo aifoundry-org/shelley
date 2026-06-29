@@ -299,6 +299,19 @@ func responsesInstructionsFromLLMSystem(systemContent []llm.SystemContent) strin
 	return strings.Join(parts, "\n")
 }
 
+// instructions builds the request instructions, prepending the Codex identity
+// when the authorizer requires it (ChatGPT subscription OAuth).
+func (s *ResponsesService) instructions(systemContent []llm.SystemContent) string {
+	base := responsesInstructionsFromLLMSystem(systemContent)
+	if s.Auth != nil && s.Auth.RequiresCodexIdentity() && !strings.HasPrefix(base, codexIdentity) {
+		if base == "" {
+			return codexIdentity
+		}
+		return codexIdentity + "\n" + base
+	}
+	return base
+}
+
 // toLLMResponseFromResponses converts Responses API response to llm.Response
 func (s *ResponsesService) toLLMResponseFromResponses(resp *responsesResponse, headers http.Header) *llm.Response {
 	if len(resp.Output) == 0 {
@@ -504,7 +517,7 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 	// Create the request
 	req := responsesRequest{
 		Model:        model.ModelName,
-		Instructions: responsesInstructionsFromLLMSystem(ir.System),
+		Instructions: s.instructions(ir.System),
 		Store:        false,
 		Stream:       true,
 		Input:        allInput,
