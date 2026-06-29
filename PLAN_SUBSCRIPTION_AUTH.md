@@ -127,6 +127,28 @@ Commits:
 17. [x] **cmd/shelley: login openai** (extend login/logout/status) + tests.
 18. [x] **wire-up + docs**.
 
+## Phase 3: OpenAI device-code login ("Sign in with Device Code")
+
+Eliminates the localhost callback. Flow (from the Codex CLI reference):
+
+1. `POST https://auth.openai.com/api/accounts/deviceauth/usercode` `{client_id}`
+   → `{device_auth_id, user_code, interval}`.
+2. Show `https://auth.openai.com/codex/device` + the user code; user approves in
+   any browser.
+3. Poll `POST .../deviceauth/token` `{device_auth_id, user_code}` — 403/404 while
+   pending, then `{authorization_code, code_verifier}` (server-generated PKCE).
+4. Exchange at `https://auth.openai.com/oauth/token` (form-encoded) → tokens.
+
+Must be enabled in the user's ChatGPT security settings.
+
+Commits:
+
+19. [x] **llm/oauth: OpenAIDeviceFlow** (usercode → poll → exchange), injectable
+    poll wait, no sleeps in tests.
+20. [x] **cmd/shelley: 'login openai' uses device-code flow** (no localhost
+    callback, no manual paste).
+21. [x] **docs**.
+
 ## Testing conventions honored
 
 - No sleeps; inject clocks/refresh funcs.

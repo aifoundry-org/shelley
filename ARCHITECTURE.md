@@ -90,7 +90,11 @@ Auth is pluggable via per-provider `Authorizer` interfaces:
 
 The OAuth flows (PKCE), token store, and refreshing token sources live in
 `llm/oauth`. Credentials are stored in `~/.config/shelley/credentials.json`
-(0600), keyed by provider.
+(0600), keyed by provider. `shelley login openai` uses the Codex **device-code**
+flow ("Sign in with Device Code"): it prints a URL and a short code and polls
+until the user approves in any browser — no localhost callback. `shelley login
+anthropic` uses the browser flow where the user pastes back an authorization
+code.
 
 Model credentials are assembled in `modelsources/`. Sources are tried in
 priority order: **Subscription** (if logged in) → exe.dev LLM integration →
