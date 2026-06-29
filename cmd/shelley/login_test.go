@@ -10,8 +10,9 @@ func TestParseLoginArgs(t *testing.T) {
 		wantErr  bool
 	}{
 		{"anthropic", []string{"anthropic"}, "anthropic", false},
+		{"openai", []string{"openai"}, "openai", false},
 		{"no args", []string{}, "", true},
-		{"unsupported provider", []string{"openai"}, "", true},
+		{"unsupported provider", []string{"gemini"}, "", true},
 		{"too many", []string{"anthropic", "extra"}, "", true},
 	}
 	for _, tt := range tests {
