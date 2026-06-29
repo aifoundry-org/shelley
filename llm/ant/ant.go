@@ -752,6 +752,18 @@ func fromLLMSystem(s llm.SystemContent) systemContent {
 	}
 }
 
+// systemBlocks converts the request's system content, prepending the Claude
+// Code identity block when the authorizer requires it (subscription OAuth).
+func (s *Service) systemBlocks(r *llm.Request) []systemContent {
+	system := mapped(r.System, fromLLMSystem)
+	if s.Auth != nil && s.Auth.RequiresClaudeCodeIdentity() {
+		if len(system) == 0 || system[0].Text != claudeCodeIdentity {
+			system = append([]systemContent{{Type: "text", Text: claudeCodeIdentity}}, system...)
+		}
+	}
+	return system
+}
+
 func (s *Service) fromLLMRequest(r *llm.Request) *request {
 	model := cmp.Or(s.Model, DefaultModel)
 	maxTokens := cmp.Or(s.MaxTokens, maxOutputTokens(model))
@@ -793,7 +805,7 @@ func (s *Service) fromLLMRequest(r *llm.Request) *request {
 		MaxTokens:  maxTokens,
 		ToolChoice: fromLLMToolChoice(r.ToolChoice),
 		Tools:      mapped(r.Tools, fromLLMTool),
-		System:     mapped(r.System, fromLLMSystem),
+		System:     s.systemBlocks(r),
 	}
 
 	applyAnthropicThinking(req, model, llm.EffectiveThinkingLevel(s.ThinkingLevel, r.ThinkingLevel), maxTokens)
@@ -868,7 +880,7 @@ func (s *Service) fromLLMRequestStrippingAllThinking(r *llm.Request) *request {
 		MaxTokens:  maxTokens,
 		ToolChoice: fromLLMToolChoice(r.ToolChoice),
 		Tools:      mapped(r.Tools, fromLLMTool),
-		System:     mapped(r.System, fromLLMSystem),
+		System:     s.systemBlocks(r),
 	}
 
 	applyAnthropicThinking(req, model, llm.EffectiveThinkingLevel(s.ThinkingLevel, r.ThinkingLevel), maxTokens)
