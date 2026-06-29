@@ -28,7 +28,7 @@ import (
 // Fields should not be altered concurrently with calling any method on ResponsesService.
 type ResponsesService struct {
 	HTTPC         *http.Client      // defaults to http.DefaultClient if nil
-	APIKey        string            // optional, if not set will try to load from env var
+	Auth          Authorizer        // must be non-nil; supplies credentials
 	Model         Model             // defaults to DefaultModel if zero value
 	ModelURL      string            // optional, overrides Model.URL
 	MaxTokens     int               // defaults to DefaultMaxTokens if zero
@@ -876,7 +876,9 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 		}
 
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+s.APIKey)
+		if err := s.Auth.SetAuth(ctx, httpReq.Header); err != nil {
+			return nil, errors.Join(errs, fmt.Errorf("set auth: %w", err))
+		}
 		if s.Org != "" {
 			httpReq.Header.Set("OpenAI-Organization", s.Org)
 		}
@@ -1307,7 +1309,7 @@ func (s *ResponsesService) ConfigDetails() map[string]string {
 		"model_name":       model.ModelName,
 		"full_url":         baseURL + "/responses",
 		"api_key_env":      model.APIKeyEnv,
-		"has_api_key_set":  fmt.Sprintf("%v", s.APIKey != ""),
+		"has_api_key_set":  fmt.Sprintf("%v", s.Auth != nil && s.Auth.HasCredential()),
 		"reasoning_replay": string(s.ReasoningReplay),
 	}
 }
