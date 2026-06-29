@@ -742,6 +742,18 @@ func fromLLMSystem(s llm.SystemContent) systemContent {
 	}
 }
 
+// systemBlocks converts the request's system content, prepending the Claude
+// Code identity block when the authorizer requires it (subscription OAuth).
+func (s *Service) systemBlocks(r *llm.Request) []systemContent {
+	system := mapped(r.System, fromLLMSystem)
+	if s.Auth != nil && s.Auth.RequiresClaudeCodeIdentity() {
+		if len(system) == 0 || system[0].Text != claudeCodeIdentity {
+			system = append([]systemContent{{Type: "text", Text: claudeCodeIdentity}}, system...)
+		}
+	}
+	return system
+}
+
 func (s *Service) fromLLMRequest(r *llm.Request) *request {
 	return s.buildRequest(r, false)
 }
@@ -773,7 +785,7 @@ func (s *Service) buildRequest(r *llm.Request, stripThinking bool) *request {
 		MaxTokens:  maxTokens,
 		ToolChoice: fromLLMToolChoice(r.ToolChoice),
 		Tools:      mapped(r.Tools, fromLLMTool),
-		System:     mapped(r.System, fromLLMSystem),
+		System:     s.systemBlocks(r),
 	}
 
 	if !s.DisableReasoning {
@@ -1166,6 +1178,7 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 	var errs error               // accumulated errors across all attempts
 	var lastErrSummary string    // short description of the most recent attempt failure
 	var retryAfter time.Duration // hint from upstream Retry-After header, reset each attempt
+	unauthorizedRetries := 0
 	for attempts := 0; ; attempts++ {
 		if attempts > 15 {
 			return nil, fmt.Errorf("anthropic request failed after %d attempts: %w", attempts, errs)
@@ -1247,6 +1260,15 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 				retryAfter = llm.ParseRetryAfter(retryAfterHdr)
 				lastErrSummary = fmt.Sprintf("status 429 rate limited: %s", llm.Truncate(string(buf), 160))
 				slog.WarnContext(ctx, "anthropic_request_rate_limited", "response", string(buf), "url", url, "model", s.Model, "retry_after", retryAfter)
+				errs = errors.Join(errs, fmt.Errorf("attempt %d at %s: status %v (url=%s, model=%s): %s", attempts+1, time.Now().Format(time.DateTime), resp.Status, url, cmp.Or(s.Model, DefaultModel), buf))
+				continue
+			case resp.StatusCode == http.StatusUnauthorized && rotatesCredentials(s.Auth) && unauthorizedRetries < maxUnauthorizedRetries:
+				// OAuth access tokens rotate: a refresh revokes the previous token,
+				// and a fleet follower may still hold it until the owner's new token
+				// replicates. SetAuth reloads the token on the next attempt.
+				unauthorizedRetries++
+				lastErrSummary = fmt.Sprintf("status 401: %s", llm.Truncate(string(buf), 160))
+				slog.WarnContext(ctx, "anthropic_request_unauthorized, retrying with reloaded token", "response", string(buf), "url", url, "model", s.Model)
 				errs = errors.Join(errs, fmt.Errorf("attempt %d at %s: status %v (url=%s, model=%s): %s", attempts+1, time.Now().Format(time.DateTime), resp.Status, url, cmp.Or(s.Model, DefaultModel), buf))
 				continue
 			case resp.StatusCode >= 400 && resp.StatusCode < 500:

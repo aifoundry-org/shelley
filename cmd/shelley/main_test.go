@@ -21,6 +21,7 @@ import (
 	"shelley.exe.dev/claudetool"
 	"shelley.exe.dev/exeenv"
 	"shelley.exe.dev/llm"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/modelsources"
 	"shelley.exe.dev/slug"
@@ -529,6 +530,126 @@ func TestToolModelsKeepGlobalChoicesWhenSubscriptionEndpointUnknown(t *testing.T
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("available models = %+v, want %+v", got, want)
+	}
+}
+
+func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
+	oldDiscover := discoverLLMIntegrations
+	discoverLLMIntegrations = func(context.Context, *http.Client, *slog.Logger) modelsources.LLMIntegrationDiscoveryResult {
+		return modelsources.LLMIntegrationDiscoveryResult{}
+	}
+	t.Cleanup(func() { discoverLLMIntegrations = oldDiscover })
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("FIREWORKS_API_KEY", "")
+
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	store := &oauth.Store{Path: credPath}
+	if err := store.Save("anthropic", oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
+	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
+
+	// Anthropic models must resolve to the subscription source (highest priority).
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude/ChatGPT subscription" {
+		t.Fatalf("claude-opus-4.8 source = %q, want Claude/ChatGPT subscription", src)
+	}
+}
+
+// Subagent and llm_one_shot model choices must resolve to the local OAuth
+// subscription for every model it serves, even when exe.dev managed and
+// ChatGPT-subscription integrations serve the same models. Nothing in
+// setupToolSetConfig knows about local subscriptions: this holds only because
+// the subscription source comes first in buildLLMModelSources and claims the
+// bare catalog IDs. Guard that against upstream changes.
+func TestToolModelsRouteToLocalSubscription(t *testing.T) {
+	integrationModel := func(native, provider, api, mode string) modelsources.IntegrationModel {
+		return modelsources.IntegrationModel{
+			ID: provider + "/" + native, Provider: provider, NativeID: native,
+			APIs: []string{api}, ExeDev: modelsources.IntegrationModelExeDev{Mode: mode},
+		}
+	}
+	oldDiscover := discoverLLMIntegrations
+	discoverLLMIntegrations = func(context.Context, *http.Client, *slog.Logger) modelsources.LLMIntegrationDiscoveryResult {
+		return modelsources.LLMIntegrationDiscoveryResult{Found: true, Integrations: []*modelsources.LLMIntegrationConfig{
+			{Name: "llm", Host: "llm.int.exe.xyz", URL: "https://llm.int.exe.xyz", Models: []modelsources.IntegrationModel{
+				integrationModel("claude-opus-5.5", "anthropic", "anthropic_messages", "managed"),
+				integrationModel("gpt-6-luna", "openai", "openai_responses", "managed"),
+			}},
+			{Name: "llm-sub-oai", Host: "llm-sub-oai.int.exe.xyz", URL: "https://llm-sub-oai.int.exe.xyz", Models: []modelsources.IntegrationModel{
+				integrationModel("gpt-6-astra", "openai", "openai_responses", "chatgpt"),
+				integrationModel("gpt-6-luna", "openai", "openai_responses", "chatgpt"),
+			}},
+		}}
+	}
+	t.Cleanup(func() { discoverLLMIntegrations = oldDiscover })
+	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_KEY"} {
+		t.Setenv(env, "")
+	}
+
+	global := GlobalConfig{CredentialsPath: filepath.Join(t.TempDir(), "credentials.json")}
+	store := &oauth.Store{Path: global.CredentialsPath}
+	for _, provider := range []string{"anthropic", "openai"} {
+		if err := store.Save(provider, oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, sources := buildLLMModelSources(context.Background(), global, shelleyConfig{}, logger)
+	manager, err := models.NewManager(&models.Config{Models: modelsources.Build(models.All(), sources, &http.Client{}, logger)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.GetModelInfo("gpt-6-astra@llm-sub-oai") == nil {
+		t.Fatal("exe.dev ChatGPT route gpt-6-astra@llm-sub-oai was not built; the test no longer exercises duplicates")
+	}
+
+	const subscription = "Claude/ChatGPT subscription"
+	toolModels := setupToolSetConfig(nil, manager)
+	for _, parent := range []string{"claude-opus-5.5", "gpt-6-astra"} {
+		if src := manager.GetModelInfo(parent).Source; src != subscription {
+			t.Fatalf("parent %s source = %q, want %q", parent, src, subscription)
+		}
+		routes := map[string]string{}
+		for _, m := range toolModels.BuildAvailableModels(parent) {
+			routes[m.Name] = m.ID
+		}
+		for _, name := range []string{"claude-opus-5.5", "gpt-6-astra", "gpt-6-luna"} {
+			id, ok := routes[name]
+			if !ok {
+				t.Fatalf("parent %s: %s missing from tool models %v", parent, name, routes)
+			}
+			if src := manager.GetModelInfo(id).Source; src != subscription {
+				t.Errorf("parent %s: %s routes to %s (source %q), want the local subscription", parent, name, id, src)
+			}
+		}
+	}
+}
+
+func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
+	oldDiscover := discoverLLMIntegrations
+	discoverLLMIntegrations = func(context.Context, *http.Client, *slog.Logger) modelsources.LLMIntegrationDiscoveryResult {
+		return modelsources.LLMIntegrationDiscoveryResult{}
+	}
+	t.Cleanup(func() { discoverLLMIntegrations = oldDiscover })
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("FIREWORKS_API_KEY", "")
+
+	credPath := filepath.Join(t.TempDir(), "credentials.json") // no file written
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
+	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
+
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT subscription" {
+		t.Fatal("subscription source present despite no stored credentials")
 	}
 }
 

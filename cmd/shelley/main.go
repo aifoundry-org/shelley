@@ -22,6 +22,7 @@ import (
 	"shelley.exe.dev/db"
 	"shelley.exe.dev/db/generated"
 	"shelley.exe.dev/llm/llmhttp"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/modelproviders"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/modelsources"
@@ -42,6 +43,7 @@ type GlobalConfig struct {
 	DefaultModel          string
 	DisableLLMIntegration bool
 	DisableGateway        bool
+	CredentialsPath       string // OAuth credential store; defaults to oauth.DefaultCredentialsPath()
 }
 
 type shelleyConfig struct {
@@ -655,6 +657,13 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shell
 
 	var sources []modelsources.Source
 
+	// 0. Subscription (Claude OAuth). Highest priority: if the user has logged
+	// in with `shelley login anthropic`, Anthropic models are served from their
+	// subscription rather than via API keys/gateway.
+	if src, ok := subscriptionSource(global, logger); ok {
+		sources = append(sources, src)
+	}
+
 	// 1. exe.dev LLM integrations.
 	var integs []*modelsources.LLMIntegrationConfig
 	llmIntegrationFound := false
@@ -722,6 +731,31 @@ func modelsCommandDefaultID(configured string, modelList []models.Built, predict
 		}
 	}
 	return ""
+}
+
+// subscriptionSource returns a Subscription model source if the user has stored
+// OAuth credentials for any subscription provider, else ok=false.
+func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.Source, bool) {
+	credPath := global.CredentialsPath
+	if credPath == "" {
+		credPath = oauth.DefaultCredentialsPath()
+	}
+	store := &oauth.Store{Path: credPath}
+	httpc := llmhttp.NewClient(nil)
+
+	var anthropicTS, openAITS *oauth.TokenSource
+	if _, err := store.Load("anthropic"); err == nil {
+		anthropicTS = oauth.NewAnthropicTokenSource(store, httpc)
+		logger.Info("Using Claude subscription credentials", "path", credPath)
+	}
+	if _, err := store.Load("openai"); err == nil {
+		openAITS = oauth.NewOpenAITokenSource(store, httpc)
+		logger.Info("Using ChatGPT subscription credentials", "path", credPath)
+	}
+	if anthropicTS == nil && openAITS == nil {
+		return modelsources.Source{}, false
+	}
+	return modelsources.Subscription(anthropicTS, openAITS), true
 }
 
 // runModels prints the materialized list of models the server would expose,
