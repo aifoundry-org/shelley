@@ -71,7 +71,7 @@ The OpenAI/Codex path mirrors this in a later phase with its own authorizer.
 Each feature commit is preceded by a test commit (or includes tests written
 first in the same commit where splitting would not compile).
 
-Status: commits 1–10 complete. Commit 11 (OpenAI/Codex) deferred as optional.
+Status: commits 1–18 complete (Anthropic + OpenAI/Codex subscription auth).
 
 1. [x] **docs:** this plan file.
 2. [x] **llm/oauth: PKCE primitives** — `pkce.go` (verifier/challenge S256) + tests.
