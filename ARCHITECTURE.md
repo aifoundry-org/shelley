@@ -73,8 +73,30 @@ The core agentic loop.
 Various tools for the LLM.
 
 
-## Other
+## Provider authentication
 
-Shelley talks to the LLMs using the llm/ library.
+Shelley talks to the LLMs using the llm/ library. Each provider client
+(`llm/ant`, `llm/oai`, `llm/gem`) authenticates per request.
+
+Anthropic auth is pluggable via the `ant.Authorizer` interface:
+
+- `ant.APIKeyAuth` — standard API key sent as `X-API-Key` (the default).
+- `ant.OAuthAuth` — Claude **subscription** auth: an OAuth bearer token plus the
+  Claude Code identity headers/system prefix the subscription backend requires.
+
+The OAuth flow, token store, and refreshing token source live in `llm/oauth`.
+Credentials are stored in `~/.config/shelley/credentials.json` (0600).
+
+Model credentials are assembled in `modelsources/`. Sources are tried in
+priority order: **Subscription** (if logged in) → exe.dev LLM integration →
+gateway → env vars → predictable.
+
+Use `shelley login anthropic` to log in, `shelley login-status anthropic` to
+check, and `shelley logout anthropic` to remove credentials.
+
+> WARNING: Using subscription credentials from a non-official client is
+> undocumented and may violate the provider's terms of service.
+
+## Other
 
 Logging happens with slog and the tint library.
