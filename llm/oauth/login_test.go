@@ -50,6 +50,9 @@ func TestNewAnthropicLoginFlowHasPKCE(t *testing.T) {
 	if flow.pkce.Verifier == "" || flow.pkce.Challenge == "" {
 		t.Error("login flow missing PKCE pair")
 	}
+	if len(flow.state) != 43 {
+		t.Errorf("state length = %d, want 43", len(flow.state))
+	}
 	if !strings.Contains(flow.AuthorizeURL(), flow.pkce.Challenge) {
 		t.Error("authorize URL does not embed PKCE challenge")
 	}
