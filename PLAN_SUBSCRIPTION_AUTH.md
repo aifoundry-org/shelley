@@ -97,6 +97,36 @@ Status: commits 1–10 complete. Commit 11 (OpenAI/Codex) deferred as optional.
 11. [ ] **(phase 2, optional)** OpenAI/Codex authorizer + login subcommand, same
     shape.
 
+## Phase 2: OpenAI / Codex (ChatGPT subscription)
+
+Confirmed transport details (Codex CLI public client):
+
+- OAuth 2.0 + PKCE; client `app_EMoamEEZ73f0CkXaXp7hrann`.
+- Authorize `https://auth.openai.com/oauth/authorize`,
+  token `https://auth.openai.com/oauth/token`,
+  redirect `http://localhost:1455/auth/callback`.
+- The subscription backend is the Responses API at
+  `https://chatgpt.com/backend-api/codex` (so the existing `ResponsesService`
+  is the right client; only auth + base URL + identity differ).
+- `Authorization: Bearer <access_token>` plus `chatgpt-account-id: <id>`, where
+  the id comes from the `chatgpt_account_id` claim in the returned id_token JWT.
+- First instruction/system block must be the Codex identity prompt.
+- Same ToS risk as Anthropic; same opt-in isolation.
+
+Commits:
+
+12. [x] **llm/oauth: OpenAI OAuth endpoints** — authorize URL, code
+    exchange/refresh, id_token account-id extraction + tests.
+13. [x] **llm/oauth: OpenAI login flow + TokenSource AccountID** + tests.
+14. [x] **llm/oai: Authorizer seam** on ResponsesService (replace APIKey with
+    APIKeyAuth; chat oai.Service stays key-only, it can't do subscription) +
+    tests.
+15. [x] **llm/oai: OAuth/Codex authorizer** (Bearer + chatgpt-account-id +
+    Codex identity instructions) + tests.
+16. [x] **modelsources: Subscription serves OpenAI codex models** + tests.
+17. [x] **cmd/shelley: login openai** (extend login/logout/status) + tests.
+18. [x] **wire-up + docs**.
+
 ## Testing conventions honored
 
 - No sleeps; inject clocks/refresh funcs.
