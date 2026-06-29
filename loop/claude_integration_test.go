@@ -20,7 +20,7 @@ func TestLoopWithClaude(t *testing.T) {
 	// Create a simple conversation with Claude service
 	loop := NewLoop(Config{
 		LLM: &ant.Service{
-			APIKey: apiKey,
+			Auth:   ant.APIKeyAuth{Key: apiKey},
 			Model:  ant.Claude45Haiku, // Use cheaper model for testing
 		},
 		History: []llm.Message{},
