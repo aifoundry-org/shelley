@@ -65,7 +65,7 @@ func NewClaudeTestHarness(t *testing.T) *ClaudeTestHarness {
 	}
 
 	service := &ant.Service{
-		APIKey: apiKey,
+		Auth:   ant.APIKeyAuth{Key: apiKey},
 		Model:  ant.Claude45Haiku, // Use cheaper model for testing
 		HTTPC:  httpc,
 	}
