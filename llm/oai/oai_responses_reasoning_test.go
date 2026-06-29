@@ -170,7 +170,7 @@ func TestResponsesServiceCodexRequestContract(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:        "test-key",
+		Auth:          APIKeyAuth{Key: "test-key"},
 		Model:         GPT54,
 		ModelURL:      server.URL,
 		ProviderName:  "openai",
@@ -272,7 +272,7 @@ func TestResponsesServiceOpenAIRequestDefaultsAreProviderIsolated(t *testing.T) 
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:       "test-key",
+		Auth:         APIKeyAuth{Key: "test-key"},
 		Model:        Grok45,
 		ModelURL:     server.URL,
 		ProviderName: "xai",
@@ -337,7 +337,7 @@ func TestResponsesServiceXAIRequestsReasoningSummaries(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:        "test-key",
+		Auth:          APIKeyAuth{Key: "test-key"},
 		Model:         Grok45,
 		ModelURL:      server.URL,
 		ProviderName:  "xai",
@@ -403,7 +403,7 @@ func TestResponsesServiceTextVerbosityFollowsModelMetadata(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey:       "test-key",
+				Auth:         APIKeyAuth{Key: "test-key"},
 				Model:        tt.model,
 				ModelURL:     server.URL,
 				ProviderName: "openai",

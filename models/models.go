@@ -158,7 +158,7 @@ func oaiResponsesSvc(model oai.Model) func(baseURL, apiKey string, httpc *http.C
 
 func oaiResponsesSvcNamed(model oai.Model, providerName string) func(baseURL, apiKey string, httpc *http.Client) llm.Service {
 	return func(baseURL, apiKey string, httpc *http.Client) llm.Service {
-		s := &oai.ResponsesService{Model: model, APIKey: apiKey, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium, ProviderName: providerName}
+		s := &oai.ResponsesService{Model: model, Auth: oai.APIKeyAuth{Key: apiKey}, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium, ProviderName: providerName}
 		if baseURL != "" {
 			s.ModelURL = baseURL + "/v1"
 		}
@@ -855,7 +855,7 @@ func (m *Manager) createServiceFromModel(model *generated.Model) llm.Service {
 		}
 	case "openai-responses":
 		service = &oai.ResponsesService{
-			APIKey:   model.ApiKey,
+			Auth:     oai.APIKeyAuth{Key: model.ApiKey},
 			ModelURL: model.Endpoint,
 			Model: oai.Model{
 				UserName:           "",
