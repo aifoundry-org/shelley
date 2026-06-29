@@ -71,28 +71,30 @@ The OpenAI/Codex path mirrors this in a later phase with its own authorizer.
 Each feature commit is preceded by a test commit (or includes tests written
 first in the same commit where splitting would not compile).
 
-1. **docs:** this plan file. (you're reviewing it)
-2. **llm/oauth: PKCE primitives** — `pkce.go` (verifier/challenge S256) + tests.
-3. **llm/oauth: Anthropic OAuth endpoints** — authorize-URL builder, token
+Status: commits 1–10 complete. Commit 11 (OpenAI/Codex) deferred as optional.
+
+1. [x] **docs:** this plan file.
+2. [x] **llm/oauth: PKCE primitives** — `pkce.go` (verifier/challenge S256) + tests.
+3. [x] **llm/oauth: Anthropic OAuth endpoints** — authorize-URL builder, token
    exchange/refresh request shaping (pure functions, httptest) + tests.
-4. **llm/oauth: credential store** — read/write `credentials.json`, expiry
+4. [x] **llm/oauth: credential store** — read/write `credentials.json`, expiry
    accounting, redaction + tests (temp dir).
-5. **llm/oauth: refreshing TokenSource** — returns a valid token, refreshes when
+5. [x] **llm/oauth: refreshing TokenSource** — returns a valid token, refreshes when
    near expiry, persists via store + tests (fake clock/refresh fn, no sleeps).
-6. **llm/ant: Authorizer seam** — add `Authorizer` iface + `APIKeyAuth`; make
+6. [x] **llm/ant: Authorizer seam** — add `Authorizer` iface + `APIKeyAuth`; make
    `Service` use it; keep `X-API-Key` semantics identical. Tests assert headers.
    (Replaces `APIKey` per AGENTS rule 4 — no compat shims.)
-7. **llm/ant: OAuth authorizer** — `OAuthAuth` sets Bearer/beta/identity headers,
+7. [x] **llm/ant: OAuth authorizer** — `OAuthAuth` sets Bearer/beta/identity headers,
    drops x-api-key; `fromLLMRequest` injects Claude Code system prefix when
    required. Tests assert wire shape.
-8. **modelsources: Subscription source** — `Subscription(...)` producing
+8. [x] **modelsources: Subscription source** — `Subscription(...)` producing
    OAuth-backed Anthropic services; wire precedence + tests.
-9. **cmd/shelley: `login` command** — `shelley login anthropic` runs the OAuth
+9. [x] **cmd/shelley: `login` command** — `shelley login anthropic` runs the OAuth
    flow and writes the store; `logout`/`status` too. Tests for arg parsing and
    flow wiring (flow itself mocked).
-10. **wire-up in buildLLMModelSources + docs** — prefer subscription when logged
+10. [x] **wire-up in buildLLMModelSources + docs** — prefer subscription when logged
     in; update README/ARCHITECTURE; final integration test.
-11. **(phase 2, optional)** OpenAI/Codex authorizer + login subcommand, same
+11. [ ] **(phase 2, optional)** OpenAI/Codex authorizer + login subcommand, same
     shape.
 
 ## Testing conventions honored
