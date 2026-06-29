@@ -521,8 +521,8 @@ func TestResponsesServiceTokenContextWindow(t *testing.T) {
 
 func TestResponsesServiceConfigDetails(t *testing.T) {
 	svc := &ResponsesService{
-		Model:  GPT5Codex,
-		APIKey: "test-key",
+		Model: GPT5Codex,
+		Auth:  APIKeyAuth{Key: "test-key"},
 	}
 
 	details := svc.ConfigDetails()
@@ -551,8 +551,8 @@ func TestResponsesServiceIntegration(t *testing.T) {
 	}
 
 	svc := &ResponsesService{
-		APIKey: apiKey,
-		Model:  GPT5Codex,
+		Auth:  APIKeyAuth{Key: apiKey},
+		Model: GPT5Codex,
 	}
 
 	ctx := context.Background()
@@ -664,7 +664,7 @@ func TestResponsesServiceDoSendsSystemAsInstructions(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -720,7 +720,7 @@ func TestResponsesServiceDoSendsMaxOutputTokens(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    modelForTest("test-model"),
 		ModelURL: server.URL,
 	}
@@ -779,7 +779,7 @@ func TestResponsesServiceDo(t *testing.T) {
 	// Create a service with the mock server
 	ctx := context.Background()
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -924,7 +924,7 @@ func TestResponsesServiceDoConsumesPlainTextStream(t *testing.T) {
 
 	var streamed strings.Builder
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -964,7 +964,7 @@ func TestResponsesServiceRetriesEmptyJSONResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL}
 	resp, err := svc.Do(context.Background(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
@@ -1036,7 +1036,7 @@ func TestResponsesServiceDoWithCaching(t *testing.T) {
 
 	ctx := context.Background()
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -1113,7 +1113,7 @@ func TestResponsesServiceReasoningEffort(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey:          "k",
+				Auth:            APIKeyAuth{Key: "k"},
 				Model:           GPT41,
 				ModelURL:        server.URL,
 				ThinkingLevel:   tt.thinkingLevel,
@@ -1186,7 +1186,7 @@ func TestResponsesServiceRequestLevelThinking(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey:          "k",
+				Auth:            APIKeyAuth{Key: "k"},
 				Model:           GPT41,
 				ModelURL:        server.URL,
 				ThinkingLevel:   tt.svcLevel,
@@ -1238,7 +1238,7 @@ func TestResponsesServiceStallTimeout(t *testing.T) {
 	defer close(release)
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 		HTTPC:    llmhttp.NewClientWithIdleTimeout(nil, 150*time.Millisecond),
