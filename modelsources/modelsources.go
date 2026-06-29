@@ -59,6 +59,11 @@ type Source struct {
 	// integration is set only for exe.dev LLM integrations, whose
 	// models.json catalog is authoritative instead of Shelley's catalog.
 	integration *LLMIntegrationConfig
+
+	// buildService, when non-nil, overrides models.Model.Build for this
+	// source (used by the subscription source to inject OAuth-backed
+	// services). conn is the matched providerConn for the model.
+	buildService func(m models.Model, conn *providerConn, httpc *http.Client) llm.Service
 }
 
 func (s *Source) labelFor(p models.Provider) string {
@@ -220,7 +225,12 @@ func Build(catalog []models.Model, sources []Source, httpc *http.Client, logger 
 				continue
 			}
 			seen[id] = true
-			svc := m.Build(conn.baseURL, conn.apiKey, httpc)
+			var svc llm.Service
+			if src.buildService != nil {
+				svc = src.buildService(m, conn, httpc)
+			} else {
+				svc = m.Build(conn.baseURL, conn.apiKey, httpc)
+			}
 			label := src.labelFor(m.Provider)
 			baseURL := conn.baseURL
 			if baseURL == "" {
@@ -340,7 +350,7 @@ func buildIntegrationService(catalog []models.Model, model IntegrationModel, bas
 	switch apiType {
 	case models.APITypeAnthropicMessages:
 		return apiType, &ant.Service{
-			APIKey:                "implicit",
+			Auth:                  ant.APIKeyAuth{Key: "implicit"},
 			URL:                   baseURL + "/v1/messages",
 			Model:                 modelName,
 			HTTPC:                 httpc,
