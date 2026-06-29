@@ -78,21 +78,26 @@ Various tools for the LLM.
 Shelley talks to the LLMs using the llm/ library. Each provider client
 (`llm/ant`, `llm/oai`, `llm/gem`) authenticates per request.
 
-Anthropic auth is pluggable via the `ant.Authorizer` interface:
+Auth is pluggable via per-provider `Authorizer` interfaces:
 
-- `ant.APIKeyAuth` — standard API key sent as `X-API-Key` (the default).
-- `ant.OAuthAuth` — Claude **subscription** auth: an OAuth bearer token plus the
-  Claude Code identity headers/system prefix the subscription backend requires.
+- Anthropic (`ant.Authorizer`): `ant.APIKeyAuth` sends `X-API-Key` (default);
+  `ant.OAuthAuth` is Claude **subscription** auth — an OAuth bearer token plus
+  the Claude Code identity headers/system prefix the subscription backend wants.
+- OpenAI (`oai.Authorizer`, on `ResponsesService`): `oai.APIKeyAuth` sends a
+  bearer key (default); `oai.OAuthAuth` is ChatGPT **subscription** auth — an
+  OAuth bearer token plus the `chatgpt-account-id` header and the Codex identity
+  instruction, pointed at the ChatGPT Codex backend URL.
 
-The OAuth flow, token store, and refreshing token source live in `llm/oauth`.
-Credentials are stored in `~/.config/shelley/credentials.json` (0600).
+The OAuth flows (PKCE), token store, and refreshing token sources live in
+`llm/oauth`. Credentials are stored in `~/.config/shelley/credentials.json`
+(0600), keyed by provider.
 
 Model credentials are assembled in `modelsources/`. Sources are tried in
 priority order: **Subscription** (if logged in) → exe.dev LLM integration →
 gateway → env vars → predictable.
 
-Use `shelley login anthropic` to log in, `shelley login-status anthropic` to
-check, and `shelley logout anthropic` to remove credentials.
+Use `shelley login <anthropic|openai>` to log in, `shelley login-status` to
+check, and `shelley logout` to remove credentials.
 
 > WARNING: Using subscription credentials from a non-official client is
 > undocumented and may violate the provider's terms of service.
