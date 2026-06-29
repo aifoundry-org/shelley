@@ -366,6 +366,9 @@ type Server struct {
 	defaultModel             string
 	requireHeader            string
 	refreshBuiltModels       func(context.Context) ([]models.Built, error)
+	credentialsPath          string
+	subscriptionSessions     map[string]subscriptionLoginSession
+	subscriptionSessionsMu   sync.Mutex
 	conversationGroup        singleflight.Group[string, *ConversationManager]
 	versionChecker           *VersionChecker
 	notifDispatcher          *notifications.Dispatcher
@@ -455,6 +458,7 @@ func NewServer(database *db.DB, llmManager LLMProvider, toolSetConfig claudetool
 		reflectionEmoji:         cachedReflectionEmoji,
 		commitTourJobs:          make(map[string]*commitTourJob),
 		commitTourRecoverySlots: make(chan struct{}, 2),
+		subscriptionSessions:    map[string]subscriptionLoginSession{},
 	}
 
 	s.conversationListStream = newConversationListStream(s)
@@ -497,9 +501,14 @@ func NewServer(database *db.DB, llmManager LLMProvider, toolSetConfig claudetool
 	return s
 }
 
-// SetModelRefresher configures the user-triggered model catalog refresh.
+// SetModelRefresher configures model catalog refreshes after model source changes.
 func (s *Server) SetModelRefresher(refresh func(context.Context) ([]models.Built, error)) {
 	s.refreshBuiltModels = refresh
+}
+
+// SetCredentialsPath configures the OAuth credential store used by subscription login APIs.
+func (s *Server) SetCredentialsPath(path string) {
+	s.credentialsPath = path
 }
 
 // RegisterNotificationChannel adds a backend notification channel to the dispatcher.
@@ -567,6 +576,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/integrations", handleIntegrations)
 	mux.HandleFunc("POST /api/integrations/notify/test", s.handleTestExeNotify)
 	mux.HandleFunc("POST /api/integrations/slack/test", s.handleTestSlack)
+
+	// Subscription OAuth API
+	mux.HandleFunc("GET /api/subscriptions", s.handleSubscriptions)
+	mux.HandleFunc("POST /api/subscriptions/{provider}/logout", s.handleSubscriptionLogout)
+	mux.HandleFunc("POST /api/subscriptions/{provider}/login/start", s.handleSubscriptionLoginStart)
+	mux.HandleFunc("POST /api/subscriptions/{provider}/login/poll", s.handleSubscriptionLoginPoll)
+	mux.HandleFunc("POST /api/subscriptions/{provider}/login/complete", s.handleSubscriptionLoginComplete)
 
 	// Models API (dynamic list refresh)
 	mux.Handle("POST /api/models/refresh", compressionHandler(http.HandlerFunc(s.handleModelRefresh)))
