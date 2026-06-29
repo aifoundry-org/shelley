@@ -150,6 +150,101 @@
       </template>
 
       <div class="overflow-menu-divider" />
+      <div class="subscriptions-menu-section">
+        <button class="overflow-menu-item subscriptions-menu-header" @click="toggleSubscriptions">
+          <i class="pi pi-key chat-menu-icon" aria-hidden="true" />
+          <span>Subscription accounts</span>
+          <span class="subscriptions-menu-chevron">{{ subscriptionsExpanded ? "▾" : "▸" }}</span>
+        </button>
+        <div v-if="subscriptionsExpanded" class="subscriptions-menu-body">
+          <div v-if="subscriptionError" class="subscriptions-menu-error">
+            {{ subscriptionError }}
+          </div>
+          <div v-if="!subscriptions && !subscriptionError" class="subscriptions-menu-muted">
+            Loading…
+          </div>
+          <div
+            v-for="provider in subscriptionProviders"
+            :key="provider.id"
+            class="subscriptions-menu-provider"
+          >
+            <div class="subscriptions-menu-provider-row">
+              <div>
+                <div class="subscriptions-menu-provider-name">{{ provider.label }}</div>
+                <div
+                  :class="[
+                    'subscriptions-menu-status',
+                    subscriptions?.providers[provider.id]?.logged_in
+                      ? 'subscriptions-menu-status-ok'
+                      : '',
+                  ]"
+                >
+                  {{ subscriptions?.providers[provider.id]?.status || "Unknown" }}
+                </div>
+              </div>
+              <button
+                v-if="subscriptions?.providers[provider.id]?.logged_in"
+                class="subscriptions-menu-small-btn"
+                :disabled="subscriptionBusy === provider.id"
+                @click="logoutSubscription(provider.id)"
+              >
+                Logout
+              </button>
+              <button
+                v-else
+                class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                :disabled="subscriptionBusy === provider.id"
+                @click="startSubscriptionLogin(provider.id)"
+              >
+                Login
+              </button>
+            </div>
+
+            <div
+              v-if="subscriptionLogin?.provider === 'openai' && provider.id === 'openai'"
+              class="subscriptions-login-box"
+            >
+              <div>Open this URL and enter the code:</div>
+              <a
+                :href="subscriptionLogin.session.verification_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ subscriptionLogin.session.verification_url }}
+              </a>
+              <div class="subscriptions-login-code">{{ subscriptionLogin.session.user_code }}</div>
+              <button
+                class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                :disabled="subscriptionLogin.polling || subscriptionBusy === 'openai'"
+                @click="pollOpenAILogin"
+              >
+                I approved it
+              </button>
+            </div>
+
+            <div
+              v-if="subscriptionLogin?.provider === 'anthropic' && provider.id === 'anthropic'"
+              class="subscriptions-login-box"
+            >
+              <div>Paste the authorization code from Anthropic:</div>
+              <textarea
+                v-model="subscriptionLogin.code"
+                class="subscriptions-code-input"
+                rows="2"
+              />
+              <button
+                class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                :disabled="!subscriptionLogin.code.trim() || subscriptionBusy === 'anthropic'"
+                @click="completeAnthropicLogin"
+              >
+                Complete login
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="overflow-menu-divider" />
       <button class="overflow-menu-item" @click="onEditAgentsMd">
         <i class="pi pi-pencil chat-menu-icon" aria-hidden="true" />
         {{ t("editUserAgentsMd") }}
@@ -326,6 +421,7 @@ import { computed, ref } from "vue";
 import Popover from "primevue/popover";
 import Button from "primevue/button";
 import Select from "primevue/select";
+import { api, type SubscriptionLoginStart, type SubscriptionsStatus } from "../../services/api";
 import type { Link } from "../../types";
 import type { Locale } from "../../i18n/types";
 import { useI18n } from "../composables/i18n";
@@ -357,6 +453,7 @@ const emit = defineEmits<{
   (e: "edit-agents-md"): void;
   (e: "edit-file"): void;
   (e: "check-version"): void;
+  (e: "models-changed"): void;
 }>();
 
 const { t, locale, setLocale } = useI18n();
@@ -403,6 +500,112 @@ const onCheckVersion = () => (emit("check-version"), hide());
 function onExternalLink(url: string) {
   emit("open-external-link", url);
   hide();
+}
+
+type SubscriptionProvider = "anthropic" | "openai";
+const subscriptionProviders: Array<{ id: SubscriptionProvider; label: string }> = [
+  { id: "anthropic", label: "Anthropic" },
+  { id: "openai", label: "OpenAI" },
+];
+const subscriptionsExpanded = ref(false);
+const subscriptions = ref<SubscriptionsStatus | null>(null);
+const subscriptionBusy = ref<SubscriptionProvider | null>(null);
+const subscriptionError = ref<string | null>(null);
+const subscriptionLogin = ref<{
+  provider: SubscriptionProvider;
+  session: SubscriptionLoginStart;
+  code: string;
+  polling: boolean;
+} | null>(null);
+
+async function refreshSubscriptions() {
+  subscriptions.value = await api.getSubscriptions();
+}
+
+async function toggleSubscriptions() {
+  subscriptionsExpanded.value = !subscriptionsExpanded.value;
+  if (!subscriptionsExpanded.value || subscriptions.value) return;
+  subscriptionError.value = null;
+  try {
+    await refreshSubscriptions();
+  } catch (err) {
+    subscriptionError.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function refreshAfterSubscriptionChange() {
+  await refreshSubscriptions();
+  emit("models-changed");
+}
+
+async function logoutSubscription(provider: SubscriptionProvider) {
+  subscriptionBusy.value = provider;
+  subscriptionError.value = null;
+  try {
+    await api.logoutSubscription(provider);
+    await refreshAfterSubscriptionChange();
+  } catch (err) {
+    subscriptionError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    subscriptionBusy.value = null;
+  }
+}
+
+async function startSubscriptionLogin(provider: SubscriptionProvider) {
+  subscriptionBusy.value = provider;
+  subscriptionError.value = null;
+  try {
+    const session = await api.startSubscriptionLogin(provider);
+    subscriptionLogin.value = { provider, session, code: "", polling: false };
+    if (provider === "anthropic" && session.authorize_url) {
+      window.open(session.authorize_url, "_blank", "noopener");
+    }
+  } catch (err) {
+    subscriptionError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    subscriptionBusy.value = null;
+  }
+}
+
+async function pollOpenAILogin() {
+  if (!subscriptionLogin.value || subscriptionLogin.value.provider !== "openai") return;
+  subscriptionLogin.value.polling = true;
+  subscriptionBusy.value = "openai";
+  subscriptionError.value = null;
+  try {
+    const result = await api.pollOpenAISubscriptionLogin(
+      subscriptionLogin.value.session.session_id,
+    );
+    if (result.done) {
+      subscriptionLogin.value = null;
+      await refreshAfterSubscriptionChange();
+    } else {
+      subscriptionError.value = "Not approved yet. Approve in the browser, then try again.";
+    }
+  } catch (err) {
+    subscriptionError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    subscriptionBusy.value = null;
+    if (subscriptionLogin.value) subscriptionLogin.value.polling = false;
+  }
+}
+
+async function completeAnthropicLogin() {
+  if (!subscriptionLogin.value || subscriptionLogin.value.provider !== "anthropic") return;
+  subscriptionBusy.value = "anthropic";
+  subscriptionError.value = null;
+  try {
+    await api.completeAnthropicSubscriptionLogin(
+      subscriptionLogin.value.session.session_id,
+      subscriptionLogin.value.code,
+    );
+    subscriptionLogin.value = null;
+    await refreshAfterSubscriptionChange();
+  } catch (err) {
+    subscriptionError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    subscriptionBusy.value = null;
+  }
 }
 
 const notificationSupported = typeof Notification !== "undefined";
