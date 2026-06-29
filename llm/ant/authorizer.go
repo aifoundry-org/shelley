@@ -35,3 +35,43 @@ func (a APIKeyAuth) SetAuth(_ context.Context, h http.Header) error {
 func (a APIKeyAuth) BetaHeaders() []string            { return nil }
 func (a APIKeyAuth) RequiresClaudeCodeIdentity() bool { return false }
 func (a APIKeyAuth) HasCredential() bool              { return a.Key != "" }
+
+// claudeCodeIdentity is the system prefix Anthropic requires on requests made
+// with subscription OAuth credentials. Without it the API rejects the request.
+const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
+
+// claudeCodeUserAgent identifies the request as the Claude Code CLI, as the
+// subscription OAuth backend expects.
+const claudeCodeUserAgent = "claude-cli/2.0.0 (external, cli)"
+
+// TokenProvider yields a currently-valid OAuth access token, refreshing as
+// needed. Implemented by oauth.TokenSource.
+type TokenProvider interface {
+	AccessToken(ctx context.Context) (string, error)
+}
+
+// OAuthAuth authenticates with a Claude subscription via an OAuth bearer token
+// plus the Claude Code identity headers the subscription backend requires.
+type OAuthAuth struct {
+	Tokens TokenProvider
+}
+
+var _ Authorizer = OAuthAuth{}
+
+func (a OAuthAuth) SetAuth(ctx context.Context, h http.Header) error {
+	tok, err := a.Tokens.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	h.Set("Authorization", "Bearer "+tok)
+	h.Set("User-Agent", claudeCodeUserAgent)
+	h.Set("X-App", "cli")
+	return nil
+}
+
+func (a OAuthAuth) BetaHeaders() []string {
+	return []string{"oauth-2025-04-20", "claude-code-20250219"}
+}
+
+func (a OAuthAuth) RequiresClaudeCodeIdentity() bool { return true }
+func (a OAuthAuth) HasCredential() bool              { return a.Tokens != nil }
