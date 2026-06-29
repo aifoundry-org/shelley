@@ -13,28 +13,47 @@ import (
 )
 
 // parseLoginArgs validates the provider argument for `shelley login`.
-// Only "anthropic" is supported today.
 func parseLoginArgs(args []string) (string, error) {
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: shelley login anthropic")
+		return "", fmt.Errorf("usage: shelley login <anthropic|openai>")
 	}
-	if args[0] != "anthropic" {
-		return "", fmt.Errorf("unsupported provider %q (only \"anthropic\" is supported)", args[0])
+	switch args[0] {
+	case "anthropic", "openai":
+		return args[0], nil
+	default:
+		return "", fmt.Errorf("unsupported provider %q (supported: anthropic, openai)", args[0])
 	}
-	return args[0], nil
+}
+
+// loginFlow is the provider-agnostic shape of an interactive OAuth login.
+type loginFlow interface {
+	AuthorizeURL() string
+	Complete(ctx context.Context, code string) error
 }
 
 // runLogin runs the interactive OAuth login flow for a subscription provider.
 func runLogin(args []string) {
-	if _, err := parseLoginArgs(args); err != nil {
+	provider, err := parseLoginArgs(args)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	store := &oauth.Store{Path: oauth.DefaultCredentialsPath()}
-	flow := oauth.NewAnthropicLoginFlow(store, llmhttp.NewClient(nil))
+	httpc := llmhttp.NewClient(nil)
 
-	fmt.Println("WARNING: Using a Claude subscription from a non-official client is")
-	fmt.Println("undocumented and may violate Anthropic's terms of service. Proceed at")
+	var flow loginFlow
+	var vendor string
+	switch provider {
+	case "anthropic":
+		flow = oauth.NewAnthropicLoginFlow(store, httpc)
+		vendor = "Claude / Anthropic"
+	case "openai":
+		flow = oauth.NewOpenAILoginFlow(store, httpc)
+		vendor = "ChatGPT / OpenAI"
+	}
+
+	fmt.Printf("WARNING: Using a %s subscription from a non-official client is\n", vendor)
+	fmt.Println("undocumented and may violate the provider's terms of service. Proceed at")
 	fmt.Println("your own risk.")
 	fmt.Println()
 	fmt.Println("1. Open this URL in your browser and approve access:")
