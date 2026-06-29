@@ -16,10 +16,10 @@ import (
 // the client is "public" in OAuth terms and relies on PKCE for security.
 const (
 	anthropicClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	anthropicAuthorizeEP = "https://claude.ai/oauth/authorize"
+	anthropicAuthorizeEP = "https://claude.com/cai/oauth/authorize"
 	anthropicTokenEP     = "https://console.anthropic.com/v1/oauth/token"
-	anthropicRedirectURI = "https://console.anthropic.com/oauth/code/callback"
-	anthropicScopes      = "org:create_api_key user:profile user:inference"
+	anthropicRedirectURI = "https://platform.claude.com/oauth/code/callback"
+	anthropicScopes      = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 )
 
 // Token is an OAuth credential set. ExpiresAt is absolute wall-clock time.
@@ -36,6 +36,7 @@ type Token struct {
 // Shelley against their Claude subscription.
 func AnthropicAuthorizeURL(p PKCE, state string) string {
 	q := url.Values{}
+	q.Set("code", "true")
 	q.Set("response_type", "code")
 	q.Set("client_id", anthropicClientID)
 	q.Set("redirect_uri", anthropicRedirectURI)
