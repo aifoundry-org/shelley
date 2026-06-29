@@ -155,7 +155,7 @@ func (s *Service) MaxImageBytes() int {
 type Service struct {
 	HTTPC           *http.Client      // defaults to http.DefaultClient if nil
 	URL             string            // defaults to DefaultURL if empty
-	APIKey          string            // must be non-empty
+	Auth            Authorizer        // must be non-nil; supplies credentials
 	Model           string            // defaults to DefaultModel if empty
 	MaxTokens       int               // 0 means use model-specific limit from modelMaxOutputTokens
 	ThinkingLevel   llm.ThinkingLevel // service-level default; ThinkingLevelDefault (zero) means "none configured"
@@ -1288,8 +1288,13 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-API-Key", s.APIKey)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
+		if err := s.Auth.SetAuth(ctx, req.Header); err != nil {
+			return nil, errors.Join(errs, fmt.Errorf("set auth: %w", err))
+		}
+		if beta := s.Auth.BetaHeaders(); len(beta) > 0 {
+			req.Header.Set("Anthropic-Beta", strings.Join(beta, ","))
+		}
 
 		resp, err := httpc.Do(req)
 		if err != nil {
@@ -1384,6 +1389,6 @@ func (s *Service) ConfigDetails() map[string]string {
 	return map[string]string{
 		"url":             url,
 		"model":           model,
-		"has_api_key_set": fmt.Sprintf("%v", s.APIKey != ""),
+		"has_api_key_set": fmt.Sprintf("%v", s.Auth != nil && s.Auth.HasCredential()),
 	}
 }
