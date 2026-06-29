@@ -41,7 +41,7 @@ func NewAnthropicLoginFlow(store *Store, httpc *http.Client) *AnthropicLoginFlow
 }
 
 func randomState() string {
-	buf := make([]byte, 16)
+	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		panic(fmt.Sprintf("generate state: %v", err))
 	}
