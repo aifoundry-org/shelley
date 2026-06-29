@@ -32,3 +32,42 @@ func (a APIKeyAuth) SetAuth(_ context.Context, h http.Header) error {
 
 func (a APIKeyAuth) RequiresCodexIdentity() bool { return false }
 func (a APIKeyAuth) HasCredential() bool         { return a.Key != "" }
+
+// codexIdentity is the instruction prefix OpenAI requires on requests made
+// with ChatGPT subscription OAuth credentials. The subscription backend
+// rejects requests whose first instruction is not the Codex identity.
+const codexIdentity = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer."
+
+// TokenProvider yields a currently-valid OAuth access token and the ChatGPT
+// account id, refreshing as needed. Implemented by oauth.TokenSource.
+type TokenProvider interface {
+	AccessToken(ctx context.Context) (string, error)
+	AccountID() (string, error)
+}
+
+// OAuthAuth authenticates with a ChatGPT subscription via an OAuth bearer
+// token plus the chatgpt-account-id header the Codex backend requires.
+type OAuthAuth struct {
+	Tokens TokenProvider
+}
+
+var _ Authorizer = OAuthAuth{}
+
+func (a OAuthAuth) SetAuth(ctx context.Context, h http.Header) error {
+	tok, err := a.Tokens.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	h.Set("Authorization", "Bearer "+tok)
+	accountID, err := a.Tokens.AccountID()
+	if err != nil {
+		return err
+	}
+	if accountID != "" {
+		h.Set("Chatgpt-Account-Id", accountID)
+	}
+	return nil
+}
+
+func (a OAuthAuth) RequiresCodexIdentity() bool { return true }
+func (a OAuthAuth) HasCredential() bool         { return a.Tokens != nil }
