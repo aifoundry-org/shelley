@@ -526,8 +526,8 @@ func TestResponsesReasoningSummaryUnmarshal(t *testing.T) {
 
 func TestResponsesServiceConfigDetails(t *testing.T) {
 	svc := &ResponsesService{
-		Model:  GPT53Codex,
-		APIKey: "test-key",
+		Model: GPT53Codex,
+		Auth:  APIKeyAuth{Key: "test-key"},
 	}
 
 	details := svc.ConfigDetails()
@@ -556,8 +556,8 @@ func TestResponsesServiceIntegration(t *testing.T) {
 	}
 
 	svc := &ResponsesService{
-		APIKey: apiKey,
-		Model:  GPT53Codex,
+		Auth:  APIKeyAuth{Key: apiKey},
+		Model: GPT53Codex,
 	}
 
 	ctx := t.Context()
@@ -669,7 +669,7 @@ func TestResponsesServiceDoSendsSystemAsInstructions(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -725,7 +725,7 @@ func TestResponsesServiceDoSendsDefaultMaxOutputTokens(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    modelForTest("test-model"),
 		ModelURL: server.URL,
 	}
@@ -784,7 +784,7 @@ func TestResponsesServiceDo(t *testing.T) {
 	// Create a service with the mock server
 	ctx := t.Context()
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -929,7 +929,7 @@ func TestResponsesServiceDoConsumesPlainTextStream(t *testing.T) {
 
 	var streamed strings.Builder
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -971,7 +971,7 @@ func TestResponsesServiceRetriesPlainTextServerError(t *testing.T) {
 
 	var retries []llm.RetryEvent
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 		Backoff:  []time.Duration{0},
@@ -1042,7 +1042,7 @@ func TestResponsesServiceUsesFirstBackoffForFirstRetry(t *testing.T) {
 	defer cancel()
 	var retry llm.RetryEvent
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 		Backoff:  []time.Duration{0, time.Hour},
@@ -1253,7 +1253,7 @@ func TestResponsesServiceDoWithCaching(t *testing.T) {
 
 	ctx := t.Context()
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 	}
@@ -1330,7 +1330,7 @@ func TestResponsesServiceReasoningEffort(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey:          "k",
+				Auth:            APIKeyAuth{Key: "k"},
 				Model:           GPT41,
 				ModelURL:        server.URL,
 				ThinkingLevel:   tt.thinkingLevel,
@@ -1403,7 +1403,7 @@ func TestResponsesServiceRequestLevelThinking(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey:          "k",
+				Auth:            APIKeyAuth{Key: "k"},
 				Model:           GPT41,
 				ModelURL:        server.URL,
 				ThinkingLevel:   tt.svcLevel,
@@ -1455,7 +1455,7 @@ func TestResponsesServiceStallTimeout(t *testing.T) {
 	defer close(release)
 
 	svc := &ResponsesService{
-		APIKey:   "test-api-key",
+		Auth:     APIKeyAuth{Key: "test-api-key"},
 		Model:    GPT41,
 		ModelURL: server.URL,
 		HTTPC:    llmhttp.NewClientWithIdleTimeout(nil, 150*time.Millisecond),

@@ -281,8 +281,8 @@ func TestLLMIntegrationEnrichesCompatibleCatalogModel(t *testing.T) {
 	if service.ModelURL != integrationURL+"/v1" {
 		t.Errorf("service URL = %q, want integration URL", service.ModelURL)
 	}
-	if service.APIKey != "implicit" {
-		t.Errorf("API key = %q, want implicit", service.APIKey)
+	if auth, ok := service.Auth.(oai.APIKeyAuth); !ok || auth.Key != "implicit" {
+		t.Errorf("auth = %#v, want APIKeyAuth{Key: implicit}", service.Auth)
 	}
 	if !service.SupportsImages() {
 		t.Error("known Sol should retain built-in image support")
