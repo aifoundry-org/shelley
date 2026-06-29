@@ -73,8 +73,32 @@ The core agentic loop.
 Various tools for the LLM.
 
 
-## Other
+## Provider authentication
 
-Shelley talks to the LLMs using the llm/ library.
+Shelley talks to the LLMs using the llm/ library. Each provider client
+(`llm/ant`, `llm/oai`, `llm/gem`) authenticates per request.
+
+Auth is pluggable via per-provider `Authorizer` interfaces:
+
+- Anthropic (`ant.Authorizer`): `ant.APIKeyAuth` sends `X-API-Key` (default);
+  `ant.OAuthAuth` is Claude **subscription** auth — an OAuth bearer token plus
+  the Claude Code identity headers/system prefix the subscription backend wants.
+- OpenAI (`oai.Authorizer`, on `ResponsesService`): `oai.APIKeyAuth` sends a
+  bearer key (default); `oai.OAuthAuth` is ChatGPT **subscription** auth — an
+  OAuth bearer token plus the `chatgpt-account-id` header and the Codex identity
+  instruction, pointed at the ChatGPT Codex backend URL.
+
+The OAuth flows (PKCE), token store, and refreshing token sources live in
+`llm/oauth`. Credentials are stored in `~/.config/shelley/credentials.json`
+(0600), keyed by provider.
+
+Model credentials are assembled in `modelsources/`. Sources are tried in
+priority order: **Subscription** (if logged in) → exe.dev LLM integration →
+gateway → env vars → predictable.
+
+> WARNING: Using subscription credentials from a non-official client is
+> undocumented and may violate the provider's terms of service.
+
+## Other
 
 Logging happens with slog and the tint library.
