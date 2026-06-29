@@ -82,7 +82,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "  skill <cat|ls|new> [name]     Read, list, or create skills\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  dtach <new|attach> ...        Persistent PTY sessions over a Unix socket\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  unpack-template <name> <dir>  Unpack a project template to a directory\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  login <provider>              Log in with a subscription (OAuth); provider: anthropic\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  login <provider>              Log in with a subscription (OAuth); provider: anthropic|openai\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  logout <provider>             Remove stored subscription credentials\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  login-status <provider>       Show subscription login status\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  version                       Print version information as JSON\n")
