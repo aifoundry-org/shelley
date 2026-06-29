@@ -42,6 +42,33 @@ func NewAnthropicTokenSource(store *Store, httpc *http.Client) *TokenSource {
 	}
 }
 
+// NewOpenAITokenSource builds a TokenSource backed by the OpenAI/Codex OAuth
+// refresh endpoint and the given credential store.
+func NewOpenAITokenSource(store *Store, httpc *http.Client) *TokenSource {
+	if httpc == nil {
+		httpc = http.DefaultClient
+	}
+	return &TokenSource{
+		Provider: "openai",
+		Store:    store,
+		refresh: func(ctx context.Context, rt string) (Token, error) {
+			prior, _ := store.Load("openai")
+			return openAIRefresh(ctx, httpc, openAITokenEP, rt, prior.AccountID)
+		},
+	}
+}
+
+// AccountID returns the stored ChatGPT account id (OpenAI subscription only).
+func (s *TokenSource) AccountID() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, err := s.Store.Load(s.Provider)
+	if err != nil {
+		return "", err
+	}
+	return tok.AccountID, nil
+}
+
 // AccessToken returns a currently-valid access token, refreshing if needed.
 func (s *TokenSource) AccessToken(ctx context.Context) (string, error) {
 	s.mu.Lock()

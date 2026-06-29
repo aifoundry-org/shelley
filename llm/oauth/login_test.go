@@ -68,3 +68,33 @@ func TestStatusReportsLoggedIn(t *testing.T) {
 		t.Errorf("Status = %q, want expired", got)
 	}
 }
+
+func TestOpenAILoginPersistsToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "acc",
+			"refresh_token": "ref",
+			"expires_in":    3600,
+			"id_token":      makeIDToken("acct-7"),
+		})
+	}))
+	defer srv.Close()
+
+	store := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	flow := NewOpenAILoginFlow(store, srv.Client())
+	flow.tokenEP = srv.URL
+
+	if !strings.HasPrefix(flow.AuthorizeURL(), openAIAuthorizeEP) {
+		t.Errorf("AuthorizeURL = %q", flow.AuthorizeURL())
+	}
+	if err := flow.Complete(context.Background(), "thecode"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tok, err := store.Load("openai")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tok.AccessToken != "acc" || tok.AccountID != "acct-7" {
+		t.Errorf("stored token = %+v", tok)
+	}
+}
