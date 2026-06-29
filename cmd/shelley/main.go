@@ -194,6 +194,7 @@ func runServe(global GlobalConfig, args []string) {
 	// Create server
 	svr := server.NewServer(database, llmManager, toolSetConfig, logger, global.PredictableOnly, llmConfig.DefaultModel, *requireHeader)
 	svr.SetModelRefresher(llmConfig.RefreshBuiltModels)
+	svr.SetCredentialsPath(global.CredentialsPath)
 	svr.Banner = *banner
 
 	// Load notification channels from DB.
