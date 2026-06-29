@@ -82,6 +82,7 @@
           @edit-agents-md="showAgentsMdEditor = true"
           @edit-file="props.onOpenFileFinder?.()"
           @check-version="openVersionModal"
+          @models-changed="refreshModels"
         />
       </div>
     </div>
@@ -3713,19 +3714,23 @@ async function handleRefreshModels() {
   }
 }
 
+async function refreshModels() {
+  try {
+    const newModels = await api.getModels();
+    models.value = newModels;
+    if (window.__SHELLEY_INIT__) window.__SHELLEY_INIT__.models = newModels;
+  } catch (err) {
+    console.error("Failed to refresh models:", err);
+  }
+}
+
 // Refresh models list when triggered or when starting a new conversation.
 watch(
   [() => props.modelsRefreshTrigger, () => props.conversationId],
   () => {
     if (props.modelsRefreshTrigger === undefined) return;
     if (props.modelsRefreshTrigger === 0 && props.conversationId !== null) return;
-    api
-      .getModels()
-      .then((newModels) => {
-        models.value = newModels;
-        if (window.__SHELLEY_INIT__) window.__SHELLEY_INIT__.models = newModels;
-      })
-      .catch((err) => console.error("Failed to refresh models:", err));
+    refreshModels();
   },
   { immediate: true },
 );
