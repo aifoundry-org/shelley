@@ -8,7 +8,7 @@ import {
   isCompactionCarried,
   isQueuedMessage,
 } from "../types";
-import { api } from "../services/api";
+import { api, type SubscriptionsStatus, type SubscriptionLoginStart } from "../services/api";
 import { messageStore } from "../services/messageStore";
 import { ThemeMode, getStoredTheme, setStoredTheme, applyTheme } from "../services/theme";
 import { useMarkdown } from "../contexts/MarkdownContext";
@@ -807,6 +807,13 @@ interface ChatInterfaceProps {
   onDraftCreated?: (conversationId: string) => void;
 }
 
+type SubscriptionProvider = "anthropic" | "openai";
+
+const SUBSCRIPTION_PROVIDERS: Array<{ id: SubscriptionProvider; label: string }> = [
+  { id: "anthropic", label: "Anthropic" },
+  { id: "openai", label: "OpenAI" },
+];
+
 const LANGUAGE_OPTIONS: { locale: Locale; flag: string; label: string }[] = [
   { locale: "en", flag: "🇺🇸", label: "English" },
   { locale: "ja", flag: "🇯🇵", label: "日本語" },
@@ -1101,6 +1108,16 @@ function ChatInterface({
   const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
   // Settings modal removed - configuration moved to status bar for empty conversations
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionsStatus | null>(null);
+  const [subscriptionsExpanded, setSubscriptionsExpanded] = useState(false);
+  const [subscriptionBusy, setSubscriptionBusy] = useState<SubscriptionProvider | null>(null);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [subscriptionLogin, setSubscriptionLogin] = useState<{
+    provider: SubscriptionProvider;
+    session: SubscriptionLoginStart;
+    code: string;
+    polling: boolean;
+  } | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredTheme);
   const { markdownMode, setMarkdownMode } = useMarkdown();
   const { t, locale, setLocale } = useI18n();
@@ -1608,6 +1625,100 @@ function ChatInterface({
       scrollToBottom();
     }
   }, [messages, loading]);
+
+  const refreshSubscriptions = useCallback(async () => {
+    const status = await api.getSubscriptions();
+    setSubscriptions(status);
+  }, []);
+
+  useEffect(() => {
+    if (!showOverflowMenu || subscriptions) return;
+    refreshSubscriptions().catch((err) => {
+      setSubscriptionError(err instanceof Error ? err.message : String(err));
+    });
+  }, [showOverflowMenu, subscriptions, refreshSubscriptions]);
+
+  const refreshModelsAfterSubscriptionChange = useCallback(async () => {
+    const newModels = await api.getModels();
+    setModels(newModels);
+    if (window.__SHELLEY_INIT__) {
+      window.__SHELLEY_INIT__.models = newModels;
+    }
+  }, []);
+
+  const handleSubscriptionLogout = useCallback(
+    async (provider: SubscriptionProvider) => {
+      setSubscriptionBusy(provider);
+      setSubscriptionError(null);
+      try {
+        await api.logoutSubscription(provider);
+        await refreshSubscriptions();
+        await refreshModelsAfterSubscriptionChange();
+      } catch (err) {
+        setSubscriptionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSubscriptionBusy(null);
+      }
+    },
+    [refreshModelsAfterSubscriptionChange, refreshSubscriptions],
+  );
+
+  const handleSubscriptionLoginStart = useCallback(async (provider: SubscriptionProvider) => {
+    setSubscriptionBusy(provider);
+    setSubscriptionError(null);
+    try {
+      const session = await api.startSubscriptionLogin(provider);
+      setSubscriptionLogin({ provider, session, code: "", polling: false });
+      if (provider === "anthropic" && session.authorize_url) {
+        window.open(session.authorize_url, "_blank", "noopener");
+      }
+    } catch (err) {
+      setSubscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubscriptionBusy(null);
+    }
+  }, []);
+
+  const handleAnthropicComplete = useCallback(async () => {
+    if (!subscriptionLogin || subscriptionLogin.provider !== "anthropic") return;
+    setSubscriptionBusy("anthropic");
+    setSubscriptionError(null);
+    try {
+      await api.completeAnthropicSubscriptionLogin(
+        subscriptionLogin.session.session_id,
+        subscriptionLogin.code,
+      );
+      setSubscriptionLogin(null);
+      await refreshSubscriptions();
+      await refreshModelsAfterSubscriptionChange();
+    } catch (err) {
+      setSubscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubscriptionBusy(null);
+    }
+  }, [refreshModelsAfterSubscriptionChange, refreshSubscriptions, subscriptionLogin]);
+
+  const handleOpenAIPoll = useCallback(async () => {
+    if (!subscriptionLogin || subscriptionLogin.provider !== "openai") return;
+    setSubscriptionLogin((cur) => (cur ? { ...cur, polling: true } : cur));
+    setSubscriptionBusy("openai");
+    setSubscriptionError(null);
+    try {
+      const result = await api.pollOpenAISubscriptionLogin(subscriptionLogin.session.session_id);
+      if (result.done) {
+        setSubscriptionLogin(null);
+        await refreshSubscriptions();
+        await refreshModelsAfterSubscriptionChange();
+      } else {
+        setSubscriptionError("Not approved yet. Approve in the browser, then try again.");
+      }
+    } catch (err) {
+      setSubscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubscriptionBusy(null);
+      setSubscriptionLogin((cur) => (cur ? { ...cur, polling: false } : cur));
+    }
+  }, [refreshModelsAfterSubscriptionChange, refreshSubscriptions, subscriptionLogin]);
 
   // Close overflow menu when clicking outside
   useEffect(() => {
@@ -3416,6 +3527,120 @@ function ChatInterface({
                     </button>
                   </>
                 )}
+
+                {/* Subscription accounts */}
+                <div className="overflow-menu-divider" />
+                <div className="subscriptions-menu-section">
+                  <button
+                    className="overflow-menu-item subscriptions-menu-header"
+                    onClick={() => setSubscriptionsExpanded(!subscriptionsExpanded)}
+                  >
+                    <svg
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      className="chat-menu-icon"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                      />
+                    </svg>
+                    <span>Subscription accounts</span>
+                    <span className="subscriptions-menu-chevron">
+                      {subscriptionsExpanded ? "▾" : "▸"}
+                    </span>
+                  </button>
+                  {subscriptionsExpanded && (
+                    <div className="subscriptions-menu-body">
+                      {subscriptionError && (
+                        <div className="subscriptions-menu-error">{subscriptionError}</div>
+                      )}
+                      {!subscriptions && !subscriptionError && (
+                        <div className="subscriptions-menu-muted">Loading…</div>
+                      )}
+                      {SUBSCRIPTION_PROVIDERS.map((provider) => {
+                        const status = subscriptions?.providers[provider.id];
+                        const login = subscriptionLogin?.provider === provider.id ? subscriptionLogin : null;
+                        return (
+                          <div key={provider.id} className="subscriptions-menu-provider">
+                            <div className="subscriptions-menu-provider-row">
+                              <div>
+                                <div className="subscriptions-menu-provider-name">{provider.label}</div>
+                                <div
+                                  className={`subscriptions-menu-status${status?.logged_in ? " subscriptions-menu-status-ok" : ""}`}
+                                >
+                                  {status?.status || "Unknown"}
+                                </div>
+                              </div>
+                              {status?.logged_in ? (
+                                <button
+                                  className="subscriptions-menu-small-btn"
+                                  disabled={subscriptionBusy === provider.id}
+                                  onClick={() => handleSubscriptionLogout(provider.id)}
+                                >
+                                  Logout
+                                </button>
+                              ) : (
+                                <button
+                                  className="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                                  disabled={subscriptionBusy === provider.id}
+                                  onClick={() => handleSubscriptionLoginStart(provider.id)}
+                                >
+                                  Login
+                                </button>
+                              )}
+                            </div>
+                            {login && provider.id === "openai" && (
+                              <div className="subscriptions-login-box">
+                                <div>Open this URL and enter the code:</div>
+                                <a
+                                  href={login.session.verification_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {login.session.verification_url}
+                                </a>
+                                <div className="subscriptions-login-code">{login.session.user_code}</div>
+                                <button
+                                  className="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                                  disabled={login.polling || subscriptionBusy === "openai"}
+                                  onClick={handleOpenAIPoll}
+                                >
+                                  I approved it
+                                </button>
+                              </div>
+                            )}
+                            {login && provider.id === "anthropic" && (
+                              <div className="subscriptions-login-box">
+                                <div>Paste the authorization code from Anthropic:</div>
+                                <textarea
+                                  className="subscriptions-code-input"
+                                  value={login.code}
+                                  onChange={(e) =>
+                                    setSubscriptionLogin((cur) =>
+                                      cur ? { ...cur, code: e.target.value } : cur,
+                                    )
+                                  }
+                                  rows={2}
+                                />
+                                <button
+                                  className="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
+                                  disabled={!login.code.trim() || subscriptionBusy === "anthropic"}
+                                  onClick={handleAnthropicComplete}
+                                >
+                                  Complete login
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
 
                 {/* Edit user AGENTS.md */}
                 <div className="overflow-menu-divider" />
