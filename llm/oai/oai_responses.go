@@ -32,7 +32,7 @@ type ResponsesService struct {
 	ReasoningOverride *modelsdev.ReasoningCapabilities
 
 	HTTPC         *http.Client      // defaults to http.DefaultClient if nil
-	APIKey        string            // optional, if not set will try to load from env var
+	Auth          Authorizer        // must be non-nil; supplies credentials
 	Model         Model             // defaults to DefaultModel if zero value
 	ModelURL      string            // optional, overrides Model.URL
 	MaxTokens     int               // defaults to DefaultMaxTokens if zero
@@ -56,7 +56,7 @@ type ResponsesService struct {
 	// "auto" resolve from models.dev; "none" disables replay explicitly.
 	ReasoningReplay ReasoningReplay
 
-	// ChatGPTPlan, if set, authenticates with a ChatGPT plan instead of APIKey.
+	// ChatGPTPlan, if set, authenticates with a ChatGPT plan instead of Auth.
 	ChatGPTPlan *ChatGPTPlan
 }
 
@@ -881,7 +881,7 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 	var lastErrStatus int     // HTTP status of the most recent attempt failure, 0 if none
 	var lastRequestErrorInfo llm.RequestErrorInfo
 	var retryAfter time.Duration // hint from upstream Retry-After header, reset each attempt
-	token := s.APIKey
+	var token string // ChatGPTPlan only; otherwise s.Auth sets credentials per attempt
 	if s.ChatGPTPlan != nil {
 		if token, err = s.ChatGPTPlan.Credentials.Token(ctx); err != nil {
 			return nil, newRequestError(err, false)
@@ -917,7 +917,11 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 		}
 
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+token)
+		if s.ChatGPTPlan != nil {
+			httpReq.Header.Set("Authorization", "Bearer "+token)
+		} else if err := s.Auth.SetAuth(ctx, httpReq.Header); err != nil {
+			return nil, errors.Join(errs, fmt.Errorf("set auth: %w", err))
+		}
 		if s.Org != "" {
 			httpReq.Header.Set("OpenAI-Organization", s.Org)
 		}
@@ -1397,7 +1401,7 @@ func (s *ResponsesService) ConfigDetails() map[string]string {
 		"model_name":       model.ModelName,
 		"full_url":         baseURL + "/responses",
 		"api_key_env":      model.APIKeyEnv,
-		"has_api_key_set":  fmt.Sprintf("%v", s.APIKey != ""),
+		"has_api_key_set":  fmt.Sprintf("%v", s.Auth != nil && s.Auth.HasCredential()),
 		"reasoning_replay": string(s.ReasoningReplay),
 	}
 }
