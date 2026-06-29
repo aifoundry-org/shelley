@@ -15,6 +15,7 @@ import (
 	"slices"
 	"time"
 
+	"shelley.exe.dev/llm"
 	"shelley.exe.dev/llm/llmhttp"
 	"shelley.exe.dev/models"
 )
@@ -54,6 +55,11 @@ type Source struct {
 	// allowedAPIModels, when non-empty, restricts this source to models
 	// whose APIModelName is in the set (used for LLM integrations).
 	allowedAPIModels map[string]bool
+
+	// buildService, when non-nil, overrides models.Model.Build for this
+	// source (used by the subscription source to inject OAuth-backed
+	// services). conn is the matched providerConn for the model.
+	buildService func(m models.Model, conn *providerConn, httpc *http.Client) llm.Service
 }
 
 func (s *Source) labelFor(p models.Provider) string {
@@ -180,7 +186,12 @@ func Build(catalog []models.Model, sources []Source, httpc *http.Client, logger 
 				continue
 			}
 			seen[id] = true
-			svc := m.Build(conn.baseURL, conn.apiKey, httpc)
+			var svc llm.Service
+			if src.buildService != nil {
+				svc = src.buildService(m, conn, httpc)
+			} else {
+				svc = m.Build(conn.baseURL, conn.apiKey, httpc)
+			}
 			label := src.labelFor(m.Provider)
 			baseURL := conn.baseURL
 			if baseURL == "" {
