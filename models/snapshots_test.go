@@ -50,7 +50,7 @@ func TestCustomModelServiceSnapshots(t *testing.T) {
 			t.Fatalf("%s: revision=%d previous=%d err=%v", tc.name, revision, previous, err)
 		}
 		if raw, ok := svc.(*loggingService).service.(*reasoningService).Service.(*ant.Service); ok &&
-			(raw.APIKey != params.ApiKey || raw.Model != params.ModelName) {
+			(raw.Auth != (ant.APIKeyAuth{Key: params.ApiKey}) || raw.Model != params.ModelName) {
 			t.Fatalf("%s: snapshot service has stale credentials or model", tc.name)
 		}
 		previous = revision

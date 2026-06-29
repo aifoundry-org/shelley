@@ -25,8 +25,8 @@ func TestDoReportsProgressPerEvent(t *testing.T) {
 		`data: {"type":"message_stop"}` + "\n\n"
 
 	s := &Service{
-		APIKey: "test-key",
-		HTTPC:  &http.Client{Transport: &mockHTTPTransport{responseBody: stream, statusCode: 200}},
+		Auth:  APIKeyAuth{Key: "test-key"},
+		HTTPC: &http.Client{Transport: &mockHTTPTransport{responseBody: stream, statusCode: 200}},
 	}
 	progress := 0
 	ctx := llm.WithProgress(t.Context(), func() { progress++ })
