@@ -528,6 +528,19 @@ func responsesInstructionsFromLLMSystem(systemContent []llm.SystemContent) strin
 	return strings.Join(parts, "\n")
 }
 
+// instructions builds the request instructions, prepending the Codex identity
+// when the authorizer requires it (ChatGPT subscription OAuth).
+func (s *ResponsesService) instructions(systemContent []llm.SystemContent) string {
+	base := responsesInstructionsFromLLMSystem(systemContent)
+	if s.Auth != nil && s.Auth.RequiresCodexIdentity() && !strings.HasPrefix(base, codexIdentity) {
+		if base == "" {
+			return codexIdentity
+		}
+		return codexIdentity + "\n" + base
+	}
+	return base
+}
+
 // toLLMResponseFromResponses converts Responses API response to llm.Response
 func (s *ResponsesService) toLLMResponseFromResponses(resp *responsesResponse, headers http.Header) *llm.Response {
 	if len(resp.Output) == 0 {
@@ -767,13 +780,16 @@ func (s *ResponsesService) buildRequest(ctx context.Context, ir *llm.Request) (r
 	// Create the request
 	req := responsesRequest{
 		Model:        model.ModelName,
-		Instructions: responsesInstructionsFromLLMSystem(ir.System),
+		Instructions: s.instructions(ir.System),
 		Store:        false,
 		Stream:       true,
 		Input:        allInput,
 		Tools:        tools,
 	}
-	if s.ChatGPTPlan == nil {
+	// ChatGPT plans and the ChatGPT subscription (Codex) backend reject
+	// max_output_tokens with HTTP 400 ("Unsupported parameter"); the real
+	// Codex CLI never sends it. Only the standard OpenAI API accepts it.
+	if s.ChatGPTPlan == nil && (s.Auth == nil || !s.Auth.RequiresCodexIdentity()) {
 		req.MaxOutputTokens = maxOutputTokens(baseURL, model.ModelName, s.MaxTokens)
 	}
 	if openAIResponses {
