@@ -80,3 +80,16 @@ func TestTokenSourceRefreshError(t *testing.T) {
 		t.Fatal("expected error when refresh fails")
 	}
 }
+
+func TestTokenSourceAccountID(t *testing.T) {
+	now := time.Unix(1000, 0)
+	tok := Token{AccessToken: "a", ExpiresAt: now.Add(time.Hour), AccountID: "acct-9"}
+	src := newTestSource(t, tok, now, nil)
+	got, err := src.AccountID()
+	if err != nil {
+		t.Fatalf("AccountID: %v", err)
+	}
+	if got != "acct-9" {
+		t.Errorf("AccountID = %q, want acct-9", got)
+	}
+}
