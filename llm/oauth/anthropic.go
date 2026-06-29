@@ -27,6 +27,9 @@ type Token struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
 	ExpiresAt    time.Time `json:"expires_at"`
+	// AccountID is the ChatGPT account id (OpenAI subscription only), extracted
+	// from the id_token JWT and sent as the chatgpt-account-id header.
+	AccountID string `json:"account_id,omitempty"`
 }
 
 // AnthropicAuthorizeURL builds the browser URL a user visits to authorize
