@@ -255,6 +255,7 @@ func runServe(global GlobalConfig, args []string) {
 	if chatGPTPlans != nil {
 		svr.SetChatGPTPlans(chatGPTPlans, llmManager.(*models.Manager).RefreshChatGPTPlans)
 	}
+	svr.SetCredentialsPath(global.CredentialsPath)
 	svr.Banner = *banner
 	svr.ArchiveStorePort = *archiveStorePort
 	svr.SocketActivated = *systemdActivation
