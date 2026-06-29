@@ -67,7 +67,7 @@ func NewService(cfg ServiceConfig) llm.Service {
 	switch cfg.APIType {
 	case APITypeAnthropicMessages:
 		return &ant.Service{
-			URL: cfg.URL, APIKey: cfg.APIKey, HTTPC: cfg.HTTPC,
+			URL: cfg.URL, Auth: ant.APIKeyAuth{Key: cfg.APIKey}, HTTPC: cfg.HTTPC,
 			Model: cfg.Model, SupportsImages_: cfg.SupportsImages, MaxTokens: cfg.MaxTokens,
 			ThinkingLevel: llm.ThinkingLevelMedium, EnableThinkingBinding: cfg.ThinkingBinding,
 			DisableReasoning: cfg.DisableReasoning,
