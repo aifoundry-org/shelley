@@ -929,7 +929,7 @@ func TestConfigDetails(t *testing.T) {
 		{
 			name: "default values",
 			service: &Service{
-				APIKey: "test-key",
+				Auth: APIKeyAuth{Key: "test-key"},
 			},
 			want: map[string]string{
 				"url":             DefaultURL,
@@ -940,9 +940,9 @@ func TestConfigDetails(t *testing.T) {
 		{
 			name: "custom values",
 			service: &Service{
-				URL:    "https://custom.anthropic.com/v1/messages",
-				Model:  Claude45Opus,
-				APIKey: "test-key",
+				URL:   "https://custom.anthropic.com/v1/messages",
+				Model: Claude45Opus,
+				Auth:  APIKeyAuth{Key: "test-key"},
 			},
 			want: map[string]string{
 				"url":             "https://custom.anthropic.com/v1/messages",
@@ -953,7 +953,7 @@ func TestConfigDetails(t *testing.T) {
 		{
 			name: "no api key",
 			service: &Service{
-				APIKey: "",
+				Auth: APIKeyAuth{Key: ""},
 			},
 			want: map[string]string{
 				"url":             DefaultURL,
@@ -1001,8 +1001,8 @@ func TestDo(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey: "test-key",
-		HTTPC:  client,
+		Auth:  APIKeyAuth{Key: "test-key"},
+		HTTPC: client,
 	}
 
 	// Create a request
@@ -1715,7 +1715,7 @@ func TestDoRetriesOnInvalidThinkingSignature(t *testing.T) {
 	}}
 
 	s := &Service{
-		APIKey:        "test-key",
+		Auth:          APIKeyAuth{Key: "test-key"},
 		Model:         Claude46Opus,
 		ThinkingLevel: llm.ThinkingLevelMedium,
 		HTTPC:         &http.Client{Transport: transport},
@@ -1771,8 +1771,8 @@ func TestDoClientError(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey: "test-key",
-		HTTPC:  client,
+		Auth:  APIKeyAuth{Key: "test-key"},
+		HTTPC: client,
 	}
 
 	// Create a request
@@ -1810,7 +1810,7 @@ func TestServiceConfigDetails(t *testing.T) {
 		{
 			name: "default values",
 			service: &Service{
-				APIKey: "test-key",
+				Auth: APIKeyAuth{Key: "test-key"},
 			},
 			want: map[string]string{
 				"url":             DefaultURL,
@@ -1821,9 +1821,9 @@ func TestServiceConfigDetails(t *testing.T) {
 		{
 			name: "custom values",
 			service: &Service{
-				APIKey: "test-key",
-				URL:    "https://custom-url.com",
-				Model:  "custom-model",
+				Auth:  APIKeyAuth{Key: "test-key"},
+				URL:   "https://custom-url.com",
+				Model: "custom-model",
 			},
 			want: map[string]string{
 				"url":             "https://custom-url.com",
@@ -1834,7 +1834,7 @@ func TestServiceConfigDetails(t *testing.T) {
 		{
 			name: "empty api key",
 			service: &Service{
-				APIKey: "",
+				Auth: APIKeyAuth{Key: ""},
 			},
 			want: map[string]string{
 				"url":             DefaultURL,
@@ -1869,8 +1869,8 @@ func TestDoStartTimeEndTime(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey: "test-key",
-		HTTPC:  client,
+		Auth:  APIKeyAuth{Key: "test-key"},
+		HTTPC: client,
 	}
 
 	// Create a request
@@ -1946,7 +1946,7 @@ func TestLiveAnthropicModels(t *testing.T) {
 		t.Run(m.name, func(t *testing.T) {
 			t.Parallel()
 			svc := &Service{
-				APIKey:        apiKey,
+				Auth:          APIKeyAuth{Key: apiKey},
 				Model:         m.model,
 				ThinkingLevel: llm.ThinkingLevelMedium,
 			}
@@ -2137,7 +2137,7 @@ func TestDoRetriesOnTruncatedStream(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey:  "test-key",
+		Auth:    APIKeyAuth{Key: "test-key"},
 		HTTPC:   &http.Client{Transport: transport},
 		Backoff: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
 	}
@@ -2173,7 +2173,7 @@ func TestDoStopsRetryingOnContextCancel(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey:  "test-key",
+		Auth:    APIKeyAuth{Key: "test-key"},
 		HTTPC:   &http.Client{Transport: transport},
 		Backoff: []time.Duration{10 * time.Second}, // long backoff to prove we don't sleep through it
 	}
@@ -2223,7 +2223,7 @@ func TestDoFailsAfterMaxRetriesOnTruncatedStream(t *testing.T) {
 	}
 
 	s := &Service{
-		APIKey:  "test-key",
+		Auth:    APIKeyAuth{Key: "test-key"},
 		HTTPC:   &http.Client{Transport: transport},
 		Backoff: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
 	}
@@ -2892,7 +2892,7 @@ func TestFromLLMRequestThinkingLevels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Service{Model: tt.model, ThinkingLevel: tt.svcLevel, APIKey: "x"}
+			s := &Service{Model: tt.model, ThinkingLevel: tt.svcLevel, Auth: APIKeyAuth{Key: "x"}}
 			got := s.fromLLMRequest(&llm.Request{
 				Messages:      []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 				ThinkingLevel: tt.reqLevel,
@@ -3134,7 +3134,7 @@ func TestServerToolBlocksLiveAnthropic(t *testing.T) {
 
 	// The sanitized version of that same history must be accepted.
 	t.Run("sanitized orphan accepted by API", func(t *testing.T) {
-		s := &Service{APIKey: apiKey, Model: Claude45Haiku}
+		s := &Service{Auth: APIKeyAuth{Key: apiKey}, Model: Claude45Haiku}
 		ir := &llm.Request{
 			Tools: []*llm.Tool{webSearchTool},
 			Messages: []llm.Message{
@@ -3160,7 +3160,7 @@ func TestServerToolBlocksLiveAnthropic(t *testing.T) {
 	// client tool_use with orphan server_tool_use blocks, followed by the client
 	// tool_result, then the web_search_tool_result blocks two messages later.
 	t.Run("split client+server history accepted by API", func(t *testing.T) {
-		s := &Service{APIKey: apiKey, Model: Claude45Haiku}
+		s := &Service{Auth: APIKeyAuth{Key: apiKey}, Model: Claude45Haiku}
 		ir := &llm.Request{
 			Tools: []*llm.Tool{webSearchTool, keywordTool},
 			Messages: []llm.Message{
