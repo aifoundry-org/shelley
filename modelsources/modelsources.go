@@ -357,7 +357,7 @@ func buildIntegrationService(catalog []models.Model, model IntegrationModel, bas
 		}, true
 	case models.APITypeOpenAIResponses:
 		return apiType, &oai.ResponsesService{
-			APIKey:        "implicit",
+			Auth:          oai.APIKeyAuth{Key: "implicit"},
 			ModelURL:      baseURL + "/v1",
 			Model:         oai.Model{ModelName: modelName, SupportsImages: supportsImages},
 			HTTPC:         httpc,
