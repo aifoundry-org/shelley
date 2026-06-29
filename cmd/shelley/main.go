@@ -588,19 +588,28 @@ func modelsCommandDefaultID(configured string, modelList []models.Built, predict
 }
 
 // subscriptionSource returns a Subscription model source if the user has stored
-// Claude OAuth credentials, else ok=false.
+// OAuth credentials for any subscription provider, else ok=false.
 func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.Source, bool) {
 	credPath := global.CredentialsPath
 	if credPath == "" {
 		credPath = oauth.DefaultCredentialsPath()
 	}
 	store := &oauth.Store{Path: credPath}
-	if _, err := store.Load("anthropic"); err != nil {
+	httpc := llmhttp.NewClient(nil)
+
+	var anthropicTS, openAITS *oauth.TokenSource
+	if _, err := store.Load("anthropic"); err == nil {
+		anthropicTS = oauth.NewAnthropicTokenSource(store, httpc)
+		logger.Info("Using Claude subscription credentials", "path", credPath)
+	}
+	if _, err := store.Load("openai"); err == nil {
+		openAITS = oauth.NewOpenAITokenSource(store, httpc)
+		logger.Info("Using ChatGPT subscription credentials", "path", credPath)
+	}
+	if anthropicTS == nil && openAITS == nil {
 		return modelsources.Source{}, false
 	}
-	logger.Info("Using Claude subscription credentials", "path", credPath)
-	ts := oauth.NewAnthropicTokenSource(store, llmhttp.NewClient(nil))
-	return modelsources.Subscription(ts), true
+	return modelsources.Subscription(anthropicTS, openAITS), true
 }
 
 // runModels prints the materialized list of built-in models the server
