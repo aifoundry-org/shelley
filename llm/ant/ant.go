@@ -799,6 +799,18 @@ func fromLLMSystem(s llm.SystemContent) systemContent {
 	}
 }
 
+// systemBlocks converts the request's system content, prepending the Claude
+// Code identity block when the authorizer requires it (subscription OAuth).
+func (s *Service) systemBlocks(r *llm.Request) []systemContent {
+	system := mapped(r.System, fromLLMSystem)
+	if s.Auth != nil && s.Auth.RequiresClaudeCodeIdentity() {
+		if len(system) == 0 || system[0].Text != claudeCodeIdentity {
+			system = append([]systemContent{{Type: "text", Text: claudeCodeIdentity}}, system...)
+		}
+	}
+	return system
+}
+
 func (s *Service) fromLLMRequest(r *llm.Request) *request {
 	return s.buildRequest(r, false)
 }
@@ -830,7 +842,7 @@ func (s *Service) buildRequest(r *llm.Request, stripThinking bool) *request {
 		MaxTokens:  maxTokens,
 		ToolChoice: fromLLMToolChoice(r.ToolChoice),
 		Tools:      mapped(r.Tools, fromLLMTool),
-		System:     mapped(r.System, fromLLMSystem),
+		System:     s.systemBlocks(r),
 	}
 
 	applyAnthropicThinking(req, model, llm.EffectiveThinkingLevel(s.ThinkingLevel, r.ThinkingLevel), maxTokens, s.supportsThinkingBinding())
