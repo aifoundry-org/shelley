@@ -82,6 +82,9 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "  tour <chunks|verify|attach|show> ...  Commit guided tours (git notes)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  exe-scroll [args]              Run the embedded exe-scroll binary\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  unpack-template <name> <dir>  Unpack a project template to a directory\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  login <provider>              Log in with a subscription (OAuth); provider: anthropic\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  logout <provider>             Remove stored subscription credentials\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  login-status <provider>       Show subscription login status\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  version                       Print version information as JSON\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "\nUse '%s <command> -h' for command-specific help\n", os.Args[0])
 	}
@@ -113,6 +116,12 @@ func main() {
 		runExeScroll(args[1:])
 	case "unpack-template":
 		runUnpackTemplate(args[1:])
+	case "login":
+		runLogin(args[1:])
+	case "logout":
+		runLogout(args[1:])
+	case "login-status":
+		runLoginStatus(args[1:])
 	case "version":
 		runVersion()
 	default:
