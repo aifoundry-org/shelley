@@ -255,6 +255,7 @@ func runServe(global GlobalConfig, args []string) {
 	svr := server.NewServer(database, llmManager, toolSetConfig, logger, global.PredictableOnly, llmConfig.DefaultModel, *requireHeader)
 	svr.SetModelRefresher(llmConfig.RefreshBuiltModels)
 	svr.SetModelProviderManager(providerManager)
+	svr.SetCredentialsPath(global.CredentialsPath)
 	svr.Banner = *banner
 	svr.SocketActivated = *systemdActivation
 
