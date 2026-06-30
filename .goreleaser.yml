@@ -31,6 +31,47 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
 
+nfpms:
+  - id: shelley
+    package_name: shelley
+    # Only the Linux builds make sense as .deb packages.
+    ids:
+      - shelley
+    formats:
+      - deb
+    # Pulled in automatically when the .deb is installed, so the Docker build
+    # (and any other installer) doesn't have to add it by hand. Shelley needs
+    # it for outbound TLS.
+    dependencies:
+      - ca-certificates
+    vendor: nekko.ai
+    homepage: https://github.com/aifoundry-org/shelley
+    maintainer: nekko.ai <support@nekko.ai>
+    description: A mobile-friendly, web-based, multi-modal coding agent.
+    license: See LICENSE
+    bindir: /usr/bin
+    contents:
+      # systemd units: socket-activated HTTP listener + the service.
+      - src: packaging/systemd/shelley.socket
+        dst: /etc/systemd/system/shelley.socket
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/shelley.service
+        dst: /etc/systemd/system/shelley.service
+        file_info:
+          mode: 0644
+      # Default configuration; marked config so upgrades don't clobber edits.
+      # Must be readable by the 'shelley' service user.
+      - src: packaging/shelley.json
+        dst: /etc/shelley.json
+        type: config|noreplace
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+
 checksum:
   name_template: 'checksums.txt'
 
@@ -48,23 +89,23 @@ changelog:
 
 release:
   github:
-    owner: boldsoftware
+    owner: aifoundry-org
     name: shelley
   draft: false
   prerelease: auto
 
-homebrew_casks:
-  - name: shelley
-    binaries:
-      - shelley
-    repository:
-      owner: boldsoftware
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Casks
-    homepage: https://github.com/boldsoftware/shelley
-    description: "A mobile-friendly, web-based, multi-modal coding agent"
-    hooks:
-      post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{caskroom_path}"]
+#homebrew_casks:
+#  - name: shelley
+#    binaries:
+#      - shelley
+#    repository:
+#      owner: ainekko 
+#      name: homebrew-tap
+#      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#    directory: Casks
+#    homepage: https://github.com/boldsoftware/shelley
+#    description: "A mobile-friendly, web-based, multi-modal coding agent"
+#    hooks:
+#      post:
+#        install: |
+#          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{caskroom_path}"]

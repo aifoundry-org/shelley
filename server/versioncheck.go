@@ -108,7 +108,7 @@ type StaticCommitInfo struct {
 // staticMetadataURL is the base URL for version metadata on GitHub Pages.
 // This avoids GitHub API rate limits. It is a var so builds can point it
 // elsewhere with -ldflags -X.
-var staticMetadataURL = "https://boldsoftware.github.io/shelley"
+var staticMetadataURL = "https://aifoundry-org.github.io/shelley"
 
 // NewVersionChecker creates a new version checker.
 func NewVersionChecker() *VersionChecker {

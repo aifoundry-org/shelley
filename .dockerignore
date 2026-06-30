@@ -1,0 +1,5 @@
+# Only the build context bits the Dockerfile needs get shipped to the daemon.
+# The .deb is placed at the context root by the Makefile; everything else is
+# noise (and can be large).
+*
+!shelley.deb

@@ -89,6 +89,23 @@ Shelley is Apache licensed. We require a CLA for contributions.
 
 Run `make`. Run `make serve` to start Shelley locally.
 
+## Docker
+
+`make docker` builds a container image that runs Shelley on Ubuntu 24.04. It
+first builds a Debian package with goreleaser (`make deb`), then installs that
+`.deb` into the image alongside the OpenSSH client and server.
+
+Shelley runs inside the container as the `shelley` system user provisioned by
+the `.deb`'s postinstall; its SQLite DB lives in that user's home,
+`/var/lib/shelley`. Override the image tag with:
+
+```
+make docker IMAGE=myrepo/shelley:tag
+```
+
+The image is built with `docker build --squash` so the intermediate apt/dpkg
+layers are flattened away.
+
 ## Dev Tricks
 
 If you want to see how mobile looks, and you're on your home
