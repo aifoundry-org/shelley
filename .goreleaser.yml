@@ -47,7 +47,7 @@ changelog:
 
 release:
   github:
-    owner: ainekko 
+    owner: nekkoai
     name: shelley
   draft: false
   prerelease: auto
