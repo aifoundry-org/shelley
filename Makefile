@@ -3,7 +3,7 @@
 # The Node.js and pnpm pinned in ui/mise.toml.
 PNPM = scripts/with-node pnpm --dir ui
 
-.PHONY: build build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui serve clean help templates demo exe-scroll exe-scroll-all
+.PHONY: build build-release build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui ui-release serve clean help templates demo exe-scroll exe-scroll-all deb docker
 
 # Default target
 all: build
@@ -28,6 +28,15 @@ templates:
 # Build the UI and Go binary
 build: exe-scroll ui templates
 	@echo "Building Shelley..."
+	go build -o bin/shelley ./cmd/shelley
+
+# Release/deploy build. Identical to `build`, but the embedded UI build info
+# omits srcDir so the binary does NOT run the dev-only "UI build is stale!"
+# staleness check at startup. Use this for any binary that will be DEPLOYED
+# (e.g. hot-swapped into the running shelley.service) on the same machine it
+# was built on, where a later git checkout/edit would otherwise brick it.
+build-release: exe-scroll ui-release templates
+	@echo "Building Shelley (release)..."
 	go build -o bin/shelley ./cmd/shelley
 
 # Build a customized Shelley binary (see the customizing-shelley skill).
@@ -84,6 +93,11 @@ build-linux-x86: ui templates
 ui:
 	@$(PNPM) install --frozen-lockfile --loglevel=error && $(PNPM) run --silent build
 
+# Build UI for release/deploy (see build-release): embeds an empty srcDir so
+# the staleness self-check is disabled in the resulting binary.
+ui-release:
+	@SHELLEY_RELEASE_BUILD=1 $(PNPM) install --frozen-lockfile --silent && SHELLEY_RELEASE_BUILD=1 $(PNPM) run --silent build
+
 # Run Go tests
 test-go: exe-scroll ui templates
 	@echo "Running Go tests..."
@@ -117,6 +131,38 @@ serve: ui
 	@echo "Starting Shelley..."
 	go run ./cmd/shelley serve
 
+# --- Container packaging ---------------------------------------------------
+#
+# Two-step flow: `deb` builds the Debian package with goreleaser, and `docker`
+# feeds that package into the container build. `docker` depends on `deb`, so
+# `make docker` does the whole thing.
+
+# Docker image tag (override with `make docker IMAGE=myrepo/shelley:tag`).
+IMAGE ?= shelley:latest
+# Host architecture -> goreleaser's deb arch suffix.
+# NB: avoid a shell `case` here -- the `)` in its patterns prematurely closes
+# make's $(shell ...) call and breaks parsing. A sed pipeline has no such issue.
+DEB_ARCH := $(shell uname -m | sed -e 's/^x86_64$$/amd64/' -e 's/^aarch64$$/arm64/')
+
+# Build the shelley .deb via goreleaser (snapshot: no git tag required).
+# Output lands in dist/shelley_<version>_linux_<arch>.deb.
+deb: exe-scroll-all ui-release templates
+	@echo "Building Debian package with goreleaser..."
+	goreleaser release --snapshot --clean --skip=publish,announce,validate
+
+# Build the container image, feeding it the freshly built .deb. Uses --squash
+# to flatten the image so intermediate apt/dpkg layers aren't shipped.
+docker: deb
+	@set -e; \
+	deb=$$(ls -t dist/shelley_*_linux_$(DEB_ARCH).deb | head -n1); \
+	if [ -z "$$deb" ]; then echo "no .deb found in dist/ for arch $(DEB_ARCH)" >&2; exit 1; fi; \
+	echo "Building $(IMAGE) from $$deb..."; \
+	cp "$$deb" shelley.deb; \
+	trap 'rm -f shelley.deb' EXIT; \
+	docker build --squash \
+		--build-arg SHELLEY_DEB=shelley.deb \
+		-t $(IMAGE) .
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
@@ -127,6 +173,8 @@ clean:
 	rm -rf ui/playwright-report/
 	rm -f *.db
 	rm -f templates/*.tar.gz
+	rm -rf dist/
+	rm -f shelley.deb
 
 # Build and (re)start the demo server
 demo:
@@ -137,6 +185,7 @@ help:
 	@echo "Shelley Build Commands:"
 	@echo ""
 	@echo "  build         Build UI, templates, and Go binary"
+	@echo "  build-release Build for deploy/hot-swap (no dev staleness check embedded)"
 	@echo "  build-custom  Build a customized binary stamped as diverged from mainline"
 	@echo "  build-linux-aarch64  Build for Linux ARM64"
 	@echo "  build-linux-x86      Build for Linux x86_64"
@@ -150,5 +199,7 @@ help:
 	@echo "  serve         Start Shelley server"
 	@echo "  serve-test    Start Shelley with predictable model"
 	@echo "  clean         Clean build artifacts"
+	@echo "  deb           Build the Debian package via goreleaser"
+	@echo "  docker        Build the flattened Docker image (builds deb first)"
 	@echo "  demo          Build and (re)start the demo server"
 	@echo "  help          Show this help"
