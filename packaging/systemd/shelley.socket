@@ -1,0 +1,12 @@
+[Unit]
+Description=Shelley socket (HTTP listener)
+PartOf=shelley.service
+
+[Socket]
+# Port the Shelley web UI/API listens on. On exe.dev VMs 8000 is the
+# default proxied port (https://<vm>.exe.xyz/). Edit and `systemctl
+# daemon-reload && systemctl restart shelley.socket` to change.
+ListenStream=8000
+
+[Install]
+WantedBy=sockets.target
