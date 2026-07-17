@@ -30,6 +30,42 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
 
+nfpms:
+  - id: shelley
+    package_name: shelley
+    # Only the Linux builds make sense as .deb packages.
+    ids:
+      - shelley
+    formats:
+      - deb
+    vendor: nekko.ai
+    homepage: https://github.com/nekkoai/shelley
+    maintainer: nekko.ai <support@nekko.ai>
+    description: A mobile-friendly, web-based, multi-modal coding agent.
+    license: See LICENSE
+    bindir: /usr/bin
+    contents:
+      # systemd units: socket-activated HTTP listener + the service.
+      - src: packaging/systemd/shelley.socket
+        dst: /etc/systemd/system/shelley.socket
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/shelley.service
+        dst: /etc/systemd/system/shelley.service
+        file_info:
+          mode: 0644
+      # Default configuration; marked config so upgrades don't clobber edits.
+      # Must be readable by the 'shelley' service user.
+      - src: packaging/shelley.json
+        dst: /exe.dev/shelley.json
+        type: config|noreplace
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+
 checksum:
   name_template: 'checksums.txt'
 
