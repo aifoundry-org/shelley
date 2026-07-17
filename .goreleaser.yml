@@ -57,7 +57,7 @@ nfpms:
       # Default configuration; marked config so upgrades don't clobber edits.
       # Must be readable by the 'shelley' service user.
       - src: packaging/shelley.json
-        dst: /exe.dev/shelley.json
+        dst: /etc/shelley.json
         type: config|noreplace
         file_info:
           mode: 0644
