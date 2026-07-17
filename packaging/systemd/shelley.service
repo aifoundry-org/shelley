@@ -1,0 +1,32 @@
+[Unit]
+Description=Shelley coding agent
+Requires=shelley.socket
+After=network-online.target shelley.socket
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shelley
+Group=shelley
+# State (SQLite DB, credentials) lives here; created by systemd as needed.
+StateDirectory=shelley
+WorkingDirectory=/var/lib/shelley
+Environment=HOME=/var/lib/shelley
+ExecStart=/usr/bin/shelley \
+  -config /exe.dev/shelley.json \
+  -db /var/lib/shelley/shelley.db \
+  serve --systemd-activation
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/shelley
+
+[Install]
+WantedBy=multi-user.target
