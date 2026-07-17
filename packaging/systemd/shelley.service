@@ -13,7 +13,7 @@ StateDirectory=shelley
 WorkingDirectory=/var/lib/shelley
 Environment=HOME=/var/lib/shelley
 ExecStart=/usr/bin/shelley \
-  -config /exe.dev/shelley.json \
+  -config /etc/shelley.json \
   -db /var/lib/shelley/shelley.db \
   serve --systemd-activation
 Restart=always
