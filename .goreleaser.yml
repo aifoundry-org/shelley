@@ -38,6 +38,9 @@ nfpms:
       - shelley
     formats:
       - deb
+    deb:
+      depends:
+        - ca-certificates
     vendor: nekko.ai
     homepage: https://github.com/nekkoai/shelley
     maintainer: nekko.ai <support@nekko.ai>
