@@ -174,8 +174,26 @@ async function build() {
     }
 
     // Write build info
-    // Get the absolute path to the src directory for staleness checking
-    const srcDir = new URL("../src", import.meta.url).pathname;
+    // Get the absolute path to the src directory for staleness checking.
+    //
+    // The embedded srcDir drives the DEV-time "UI build is stale!" guard in
+    // ui/embedfs.go: at startup the binary walks srcDir and refuses to run if
+    // any source file is newer than this build. That's helpful while iterating
+    // locally, but it is actively harmful for a binary that gets DEPLOYED onto
+    // the same machine it was built on (e.g. hot-swapped into a running
+    // service): a later `git checkout`/edit bumps a ui/src mtime and the
+    // deployed binary then bricks itself on the next restart.
+    //
+    // A release/deploy build therefore embeds an EMPTY srcDir, which makes
+    // embedfs.go skip the staleness check entirely (see its `srcDir == ""`
+    // early return). Set SHELLEY_RELEASE_BUILD=1 for such builds (see the
+    // `build-release` Makefile target, used by the hot-swap flow).
+    const isReleaseBuild =
+      process.env.SHELLEY_RELEASE_BUILD === "1" ||
+      process.env.SHELLEY_RELEASE_BUILD === "true";
+    const srcDir = isReleaseBuild
+      ? ""
+      : new URL("../src", import.meta.url).pathname;
 
     // Get git commit info
     let commit = "";
