@@ -1,6 +1,6 @@
 # Shelley Makefile
 
-.PHONY: build build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui serve clean help templates demo exe-scroll exe-scroll-all
+.PHONY: build build-release build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui ui-release serve clean help templates demo exe-scroll exe-scroll-all
 
 # Default target
 all: build
@@ -25,6 +25,15 @@ templates:
 # Build the UI and Go binary
 build: exe-scroll ui templates
 	@echo "Building Shelley..."
+	go build -o bin/shelley ./cmd/shelley
+
+# Release/deploy build. Identical to `build`, but the embedded UI build info
+# omits srcDir so the binary does NOT run the dev-only "UI build is stale!"
+# staleness check at startup. Use this for any binary that will be DEPLOYED
+# (e.g. hot-swapped into the running shelley.service) on the same machine it
+# was built on, where a later git checkout/edit would otherwise brick it.
+build-release: exe-scroll ui-release templates
+	@echo "Building Shelley (release)..."
 	go build -o bin/shelley ./cmd/shelley
 
 # Build a customized Shelley binary (see the customizing-shelley skill).
@@ -80,6 +89,11 @@ build-linux-x86: ui templates
 ui:
 	@cd ui && pnpm install --frozen-lockfile --silent && pnpm run --silent build
 
+# Build UI for release/deploy (see build-release): embeds an empty srcDir so
+# the staleness self-check is disabled in the resulting binary.
+ui-release:
+	@cd ui && SHELLEY_RELEASE_BUILD=1 pnpm install --frozen-lockfile --silent && SHELLEY_RELEASE_BUILD=1 pnpm run --silent build
+
 # Run Go tests
 test-go: exe-scroll ui
 	@echo "Running Go tests..."
@@ -133,6 +147,7 @@ help:
 	@echo "Shelley Build Commands:"
 	@echo ""
 	@echo "  build         Build UI, templates, and Go binary"
+	@echo "  build-release Build for deploy/hot-swap (no dev staleness check embedded)"
 	@echo "  build-custom  Build a customized binary stamped as diverged from mainline"
 	@echo "  build-linux-aarch64  Build for Linux ARM64"
 	@echo "  build-linux-x86      Build for Linux x86_64"
