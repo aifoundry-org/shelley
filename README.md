@@ -83,12 +83,12 @@ Run `make`. Run `make serve` to start Shelley locally.
 first builds a Debian package with goreleaser (`make deb`), then installs that
 `.deb` into the image alongside the OpenSSH client and server.
 
-Shelley runs inside the container as the `exedev` user. By default that user's
-UID/GID mirror the host user running the build (falling back to `1000:1000`),
-so bind-mounted files line up. Override any of the knobs:
+Shelley runs inside the container as the `shelley` system user provisioned by
+the `.deb`'s postinstall; its SQLite DB lives in that user's home,
+`/var/lib/shelley`. Override the image tag with:
 
 ```
-make docker IMAGE=myrepo/shelley:tag DOCKER_UID=1001 DOCKER_GID=1001
+make docker IMAGE=myrepo/shelley:tag
 ```
 
 The image is built with `docker build --squash` so the intermediate apt/dpkg
