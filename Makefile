@@ -135,10 +135,6 @@ serve: ui
 
 # Docker image tag (override with `make docker IMAGE=myrepo/shelley:tag`).
 IMAGE ?= shelley:latest
-# Host user's UID/GID, baked into the container's 'exedev' user so bind-mounted
-# files line up. Falls back to 1000 if they can't be determined.
-DOCKER_UID ?= $(shell id -u 2>/dev/null || echo 1000)
-DOCKER_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 # Host architecture -> goreleaser's deb arch suffix.
 DEB_ARCH := $(shell case $$(uname -m) in x86_64) echo amd64 ;; aarch64|arm64) echo arm64 ;; *) uname -m ;; esac)
 
@@ -154,13 +150,11 @@ docker: deb
 	@set -e; \
 	deb=$$(ls -t dist/shelley_*_linux_$(DEB_ARCH).deb | head -n1); \
 	if [ -z "$$deb" ]; then echo "no .deb found in dist/ for arch $(DEB_ARCH)" >&2; exit 1; fi; \
-	echo "Building $(IMAGE) from $$deb (UID=$(DOCKER_UID) GID=$(DOCKER_GID))..."; \
+	echo "Building $(IMAGE) from $$deb..."; \
 	cp "$$deb" shelley.deb; \
 	trap 'rm -f shelley.deb' EXIT; \
 	docker build --squash \
 		--build-arg SHELLEY_DEB=shelley.deb \
-		--build-arg USER_UID=$(DOCKER_UID) \
-		--build-arg USER_GID=$(DOCKER_GID) \
 		-t $(IMAGE) .
 
 # Clean build artifacts
