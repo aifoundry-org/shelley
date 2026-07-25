@@ -38,6 +38,11 @@ nfpms:
       - shelley
     formats:
       - deb
+    # Pulled in automatically when the .deb is installed, so the Docker build
+    # (and any other installer) doesn't have to add it by hand. Shelley needs
+    # it for outbound TLS.
+    dependencies:
+      - ca-certificates
     vendor: nekko.ai
     homepage: https://github.com/nekkoai/shelley
     maintainer: nekko.ai <support@nekko.ai>
