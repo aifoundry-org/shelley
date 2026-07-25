@@ -10,11 +10,6 @@
 
 FROM ubuntu:24.04 AS build
 
-# UID/GID for the in-container 'exedev' user. The Makefile passes the host
-# user's UID/GID so bind-mounted files line up; both default to 1000.
-ARG USER_UID=1000
-ARG USER_GID=1000
-
 # The prebuilt shelley .deb (from goreleaser), copied into the build context
 # by the Makefile.
 ARG SHELLEY_DEB=shelley.deb
@@ -30,22 +25,10 @@ RUN set -eux; \
         ca-certificates \
         openssh-client \
         openssh-server; \
+    # Installing the .deb runs its postinstall, which creates the 'shelley'
+    # system user (home /var/lib/shelley) that the service runs as.
     apt-get install -y --no-install-recommends /tmp/shelley.deb; \
     rm -f /tmp/shelley.deb; \
-    # Ensure an 'exedev' user/group owns the requested UID/GID. Ubuntu 24.04
-    # ships a default 'ubuntu' user at 1000:1000, so when the ids already exist
-    # we rename/adopt them; otherwise we create fresh entries.
-    if getent group "${USER_GID}" >/dev/null; then \
-        groupmod -n exedev "$(getent group "${USER_GID}" | cut -d: -f1)"; \
-    else \
-        groupadd -g "${USER_GID}" exedev; \
-    fi; \
-    if getent passwd "${USER_UID}" >/dev/null; then \
-        existing="$(getent passwd "${USER_UID}" | cut -d: -f1)"; \
-        usermod -l exedev -g "${USER_GID}" -d /home/exedev -m "${existing}"; \
-    else \
-        useradd -m -u "${USER_UID}" -g "${USER_GID}" -s /bin/bash exedev; \
-    fi; \
     # sshd's privilege-separation directory.
     mkdir -p /var/run/sshd; \
     # Drop apt caches so the flattened final layer stays small.
@@ -53,14 +36,16 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # Final stage: flatten everything from the build stage into a single layer.
-# FROM scratch carries no metadata, so anything the runtime needs (PATH, user,
-# workdir) is re-declared here.
+# FROM scratch carries no metadata, so anything the runtime needs (PATH, HOME,
+# user, workdir) is re-declared here.
 FROM scratch
 COPY --from=build / /
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ENV HOME=/home/exedev
-USER exedev
-WORKDIR /home/exedev
+ENV HOME=/var/lib/shelley
+# Run as the 'shelley' system user provisioned by the .deb's postinstall; it
+# owns /var/lib/shelley, where the SQLite DB lives.
+USER shelley
+WORKDIR /var/lib/shelley
 EXPOSE 9000
-CMD ["shelley", "serve"]
+CMD ["/usr/bin/shelley", "-config", "/etc/shelley.json", "-db", "/var/lib/shelley/shelley.db", "serve"]
