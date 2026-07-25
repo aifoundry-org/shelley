@@ -1,6 +1,6 @@
 # Shelley Makefile
 
-.PHONY: build build-release build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui ui-release serve clean help templates demo exe-scroll exe-scroll-all
+.PHONY: build build-release build-custom build-linux-aarch64 build-linux-x86 test test-go test-e2e ui ui-release serve clean help templates demo exe-scroll exe-scroll-all deb docker
 
 # Default target
 all: build
@@ -127,6 +127,42 @@ serve: ui
 	@echo "Starting Shelley..."
 	go run ./cmd/shelley serve
 
+# --- Container packaging ---------------------------------------------------
+#
+# Two-step flow: `deb` builds the Debian package with goreleaser, and `docker`
+# feeds that package into the container build. `docker` depends on `deb`, so
+# `make docker` does the whole thing.
+
+# Docker image tag (override with `make docker IMAGE=myrepo/shelley:tag`).
+IMAGE ?= shelley:latest
+# Host user's UID/GID, baked into the container's 'exedev' user so bind-mounted
+# files line up. Falls back to 1000 if they can't be determined.
+DOCKER_UID ?= $(shell id -u 2>/dev/null || echo 1000)
+DOCKER_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+# Host architecture -> goreleaser's deb arch suffix.
+DEB_ARCH := $(shell case $$(uname -m) in x86_64) echo amd64 ;; aarch64|arm64) echo arm64 ;; *) uname -m ;; esac)
+
+# Build the shelley .deb via goreleaser (snapshot: no git tag required).
+# Output lands in dist/shelley_<version>_linux_<arch>.deb.
+deb: exe-scroll-all ui-release templates
+	@echo "Building Debian package with goreleaser..."
+	goreleaser release --snapshot --clean --skip=publish,announce,validate
+
+# Build the container image, feeding it the freshly built .deb. Uses --squash
+# to flatten the image so intermediate apt/dpkg layers aren't shipped.
+docker: deb
+	@set -e; \
+	deb=$$(ls -t dist/shelley_*_linux_$(DEB_ARCH).deb | head -n1); \
+	if [ -z "$$deb" ]; then echo "no .deb found in dist/ for arch $(DEB_ARCH)" >&2; exit 1; fi; \
+	echo "Building $(IMAGE) from $$deb (UID=$(DOCKER_UID) GID=$(DOCKER_GID))..."; \
+	cp "$$deb" shelley.deb; \
+	trap 'rm -f shelley.deb' EXIT; \
+	docker build --squash \
+		--build-arg SHELLEY_DEB=shelley.deb \
+		--build-arg USER_UID=$(DOCKER_UID) \
+		--build-arg USER_GID=$(DOCKER_GID) \
+		-t $(IMAGE) .
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
@@ -137,6 +173,8 @@ clean:
 	rm -rf ui/playwright-report/
 	rm -f *.db
 	rm -f templates/*.tar.gz
+	rm -rf dist/
+	rm -f shelley.deb
 
 # Build and (re)start the demo server
 demo:
@@ -161,6 +199,8 @@ help:
 	@echo "  serve         Start Shelley server"
 	@echo "  serve-test    Start Shelley with predictable model"
 	@echo "  clean         Clean build artifacts"
+	@echo "  deb           Build the Debian package via goreleaser"
+	@echo "  docker        Build the flattened Docker image (builds deb first)"
 	@echo "  demo          Build and (re)start the demo server"
 	@echo "  help          Show this help"
 
