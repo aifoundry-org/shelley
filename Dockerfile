@@ -20,15 +20,20 @@ COPY ${SHELLEY_DEB} /tmp/shelley.deb
 
 RUN set -eux; \
     apt-get update; \
-    # openssh client + server. The shelley .deb depends on ca-certificates, so
-    # apt pulls that in when the package is installed below.
+    # openssh client + server and sudo. The shelley .deb depends on
+    # ca-certificates, so apt pulls that in when the package is installed below.
     apt-get install -y --no-install-recommends \
         openssh-client \
-        openssh-server; \
+        openssh-server \
+        sudo; \
     # Installing the .deb runs its postinstall, which creates the 'shelley'
     # system user (home /var/lib/shelley) that the service runs as.
     apt-get install -y --no-install-recommends /tmp/shelley.deb; \
     rm -f /tmp/shelley.deb; \
+    # The system user has no password, so grant passwordless sudo explicitly.
+    printf '%s\n' 'shelley ALL=(ALL:ALL) NOPASSWD:ALL' > /etc/sudoers.d/shelley; \
+    chmod 0440 /etc/sudoers.d/shelley; \
+    visudo -c; \
     # sshd's privilege-separation directory.
     mkdir -p /var/run/sshd; \
     # Drop apt caches so the flattened final layer stays small.
