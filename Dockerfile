@@ -20,9 +20,9 @@ COPY ${SHELLEY_DEB} /tmp/shelley.deb
 
 RUN set -eux; \
     apt-get update; \
-    # openssh client + server, plus the shelley .deb (apt resolves its deps).
+    # openssh client + server. The shelley .deb depends on ca-certificates, so
+    # apt pulls that in when the package is installed below.
     apt-get install -y --no-install-recommends \
-        ca-certificates \
         openssh-client \
         openssh-server; \
     # Installing the .deb runs its postinstall, which creates the 'shelley'
