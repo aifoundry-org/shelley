@@ -91,6 +91,48 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
+      - name: Build and export Docker container
+        id: container
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          DEB=$(find dist -maxdepth 1 -type f -name 'shelley_*_linux_amd64.deb' -print -quit)
+          if [ -z "$DEB" ]; then
+            echo "Linux amd64 .deb not found in dist/" >&2
+            exit 1
+          fi
+
+          cp "$DEB" shelley.deb
+          CONTAINER_ID=
+          trap 'rm -f shelley.deb; if [ -n "$CONTAINER_ID" ]; then docker rm "$CONTAINER_ID" >/dev/null; fi' EXIT
+
+          IMAGE="shelley:${VERSION}"
+          docker build --squash \
+            --build-arg SHELLEY_DEB=shelley.deb \
+            -t "$IMAGE" .
+
+          CONTAINER_ID=$(docker create "$IMAGE")
+          ARCHIVE="dist/shelley_${VERSION}_linux_amd64_container.tar.gz"
+          docker export "$CONTAINER_ID" | gzip -9 > "$ARCHIVE"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Attach Docker container to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE: ${{ steps.container.outputs.archive }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_NAME=$(basename "$ARCHIVE")
+          (
+            cd dist
+            sha256sum "$ARCHIVE_NAME" >> checksums.txt
+            sort -k2 -o checksums.txt checksums.txt
+          )
+          gh release upload "$TAG" "$ARCHIVE" dist/checksums.txt --clobber
+
       - name: Resolve headless-shell stable version
         id: headless
         run: |
