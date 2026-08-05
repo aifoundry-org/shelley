@@ -317,7 +317,7 @@ func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, logger)
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	// Anthropic models must resolve to the subscription source (highest priority).
@@ -340,7 +340,7 @@ func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
 
 	credPath := filepath.Join(t.TempDir(), "credentials.json") // no file written
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, logger)
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT subscription" {
