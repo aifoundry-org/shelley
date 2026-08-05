@@ -44,7 +44,7 @@ nfpms:
     dependencies:
       - ca-certificates
     vendor: nekko.ai
-    homepage: https://github.com/nekkoai/shelley
+    homepage: https://github.com/aifoundry-org/shelley
     maintainer: nekko.ai <support@nekko.ai>
     description: A mobile-friendly, web-based, multi-modal coding agent.
     license: See LICENSE
@@ -88,7 +88,7 @@ changelog:
 
 release:
   github:
-    owner: nekkoai
+    owner: aifoundry-org
     name: shelley
   draft: false
   prerelease: auto
