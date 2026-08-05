@@ -19,7 +19,7 @@ def get_headless_shell_release() -> tuple[str, str] | None:
     import urllib.request
 
     # List releases and find the latest headless-shell/* tag
-    url = "https://api.github.com/repos/boldsoftware/shelley/releases?per_page=20"
+    url = "https://api.github.com/repos/aifoundry-org/shelley/releases?per_page=20"
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -67,7 +67,7 @@ def generate_release_json(output_dir: Path) -> None:
 
     version = latest_tag[1:] if latest_tag.startswith("v") else latest_tag
 
-    base_url = f"https://github.com/boldsoftware/shelley/releases/download/{latest_tag}"
+    base_url = f"https://github.com/aifoundry-org/shelley/releases/download/{latest_tag}"
 
     release_info = {
         "tag_name": latest_tag,
@@ -89,7 +89,7 @@ def generate_release_json(output_dir: Path) -> None:
     hs = get_headless_shell_release()
     if hs:
         hs_version, hs_tag = hs
-        hs_base = f"https://github.com/boldsoftware/shelley/releases/download/{hs_tag}"
+        hs_base = f"https://github.com/aifoundry-org/shelley/releases/download/{hs_tag}"
         release_info["headless_shell_version"] = hs_version
         release_info["headless_shell_urls"] = {
             "linux_amd64": f"{hs_base}/headless-shell-linux-amd64.tar.gz",
@@ -130,7 +130,7 @@ def generate_index_html(output_dir: Path) -> None:
 <html>
 <head><title>Shelley</title></head>
 <body>
-<p><a href="https://github.com/boldsoftware/shelley">github.com/boldsoftware/shelley</a></p>
+<p><a href="https://github.com/aifoundry-org/shelley">github.com/aifoundry-org/shelley</a></p>
 <ul>
 <li><a href="release.json">release.json</a></li>
 <li><a href="commits.json">commits.json</a></li>
