@@ -123,7 +123,9 @@ serve: ui
 # Docker image tag (override with `make docker IMAGE=myrepo/shelley:tag`).
 IMAGE ?= shelley:latest
 # Host architecture -> goreleaser's deb arch suffix.
-DEB_ARCH := $(shell case $$(uname -m) in x86_64) echo amd64 ;; aarch64|arm64) echo arm64 ;; *) uname -m ;; esac)
+# NB: avoid a shell `case` here -- the `)` in its patterns prematurely closes
+# make's $(shell ...) call and breaks parsing. A sed pipeline has no such issue.
+DEB_ARCH := $(shell uname -m | sed -e 's/^x86_64$$/amd64/' -e 's/^aarch64$$/arm64/')
 
 # Build the shelley .deb via goreleaser (snapshot: no git tag required).
 # Output lands in dist/shelley_<version>_linux_<arch>.deb.
