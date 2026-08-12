@@ -30,6 +30,12 @@ RUN set -eux; \
     # Installing the .deb runs its postinstall, which creates the 'shelley'
     # system user (home /var/lib/shelley) that the service runs as.
     apt-get install -y --no-install-recommends /tmp/shelley.deb; \
+    # smithd filesystem loans authenticate this exact non-root runtime user
+    # with a one-time public key and run a forced SSHFS command. OpenSSH rejects
+    # locked accounts and accounts whose shell is nologin, even when password
+    # authentication is disabled.
+    usermod --shell /bin/sh shelley; \
+    passwd --delete shelley; \
     rm -f /tmp/shelley.deb; \
     # The system user has no password, so grant passwordless sudo explicitly.
     printf '%s\n' 'shelley ALL=(ALL:ALL) NOPASSWD:ALL' > /etc/sudoers.d/shelley; \
