@@ -25,6 +25,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         openssh-client \
         openssh-server \
+        sshfs \
         sudo; \
     # Installing the .deb runs its postinstall, which creates the 'shelley'
     # system user (home /var/lib/shelley) that the service runs as.
