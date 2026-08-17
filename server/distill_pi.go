@@ -162,11 +162,23 @@ func findPiCutPoint(messages []llm.Message, keepRecentTokens int) int {
 	for i := len(messages) - 1; i >= 0; i-- {
 		accumulated += estimatePiMessageTokens(messages[i])
 		if accumulated >= keepRecentTokens {
-			// Pick the first valid cut point at or after i.
+			// Pick the first valid cut point at or after i. If the newest
+			// message is a large tool result, there is no later cut point;
+			// keep its preceding assistant tool_use so the pair stays valid.
+			found := false
 			for _, c := range cutPoints {
 				if c >= i {
 					cutIndex = c
+					found = true
 					break
+				}
+			}
+			if !found {
+				for j := len(cutPoints) - 1; j >= 0; j-- {
+					if cutPoints[j] < i {
+						cutIndex = cutPoints[j]
+						break
+					}
 				}
 			}
 			break

@@ -122,6 +122,29 @@ func TestFindPiCutPointExcludesImageHeavyHistory(t *testing.T) {
 	}
 }
 
+func TestFindPiCutPointCountsTrailingImageAndKeepsToolPair(t *testing.T) {
+	msgs := []llm.Message{
+		textMsg(llm.MessageRoleUser, "older context"),
+		{Role: llm.MessageRoleAssistant, Content: []llm.Content{{
+			Type: llm.ContentTypeToolUse, ToolName: "browser", ToolInput: json.RawMessage(`{"action":"screenshot"}`),
+		}}},
+		{Role: llm.MessageRoleUser, Content: []llm.Content{{
+			Type:      llm.ContentTypeToolResult,
+			ToolUseID: "shot",
+			ToolResult: []llm.Content{{
+				Type: llm.ContentTypeText, MediaType: "image/png", Data: strings.Repeat("x", 100_000),
+			}},
+		}}},
+	}
+
+	if got := estimatePiMessageTokens(msgs[2]); got < 25_000 {
+		t.Fatalf("image estimate = %d, want at least 25000", got)
+	}
+	if cut := findPiCutPoint(msgs, 20_000); cut != 1 {
+		t.Fatalf("cut = %d, want 1 so trailing tool_use/result stay paired", cut)
+	}
+}
+
 func TestSerializePiConversationRendersRolesAndTools(t *testing.T) {
 	msgs := []llm.Message{
 		textMsg(llm.MessageRoleUser, "fix the bug"),
