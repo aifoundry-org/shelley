@@ -575,7 +575,7 @@ func TestResponsesReasoningEffortClamps(t *testing.T) {
 			}))
 			defer server.Close()
 
-			svc := &ResponsesService{APIKey: "k", Model: tt.model, ModelURL: server.URL}
+			svc := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: tt.model, ModelURL: server.URL}
 			_, err := svc.Do(context.Background(), &llm.Request{
 				Messages:        []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 				ThinkingLevel:   tt.reqLevel,
