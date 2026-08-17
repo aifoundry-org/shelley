@@ -343,6 +343,11 @@ func (l *Loop) processLLMRequest(ctx context.Context) error {
 		llmService := l.llm
 		l.mu.Unlock()
 
+		// Image tool results have already been consumed once an assistant reply
+		// follows them. Keep the durable image in history/DB for the UI, but do
+		// not resend every old screenshot on every request.
+		messages = elideConsumedToolResultImages(messages)
+
 		// Enable prompt caching: set cache flag on last tool and last user message content
 		// See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 		if len(tools) > 0 {
