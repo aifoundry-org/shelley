@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"shelley.exe.dev/llm/oauth"
-	"shelley.exe.dev/loop"
+	"shelley.exe.dev/llm/predictable"
 	"shelley.exe.dev/models"
 )
 
@@ -53,7 +53,7 @@ func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing
 		t.Fatalf("save token: %v", err)
 	}
 	mgr, err := models.NewManager(&models.Config{
-		Models: []models.Built{{ID: "old-built", Provider: models.ProviderBuiltIn, Service: loop.NewPredictableService()}},
+		Models: []models.Built{{ID: "old-built", Provider: models.ProviderBuiltIn, Service: predictable.NewService()}},
 		Logger: slog.Default(),
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing
 		credentialsPath: credPath,
 		refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 			refreshed = true
-			return []models.Built{{ID: "new-built", Provider: models.ProviderBuiltIn, Service: loop.NewPredictableService()}}, nil
+			return []models.Built{{ID: "new-built", Provider: models.ProviderBuiltIn, Service: predictable.NewService()}}, nil
 		},
 	}
 	mux := http.NewServeMux()
