@@ -851,6 +851,14 @@ func maxOutputTokens(endpoint, modelName string, configured int) int {
 	return min(cmp.Or(configured, limit), limit)
 }
 
+// isNVIDIABaseURL reports whether the URL points at NVIDIA's hosted NIM API.
+// NIM uses the OpenAI chat protocol with two notable differences: it expects
+// max_tokens rather than max_completion_tokens, and it requires a content
+// field on every message, including assistant tool-call turns.
+func isNVIDIABaseURL(baseURL string) bool {
+	return endpointHostMatches(baseURL, "integrate.api.nvidia.com")
+}
+
 // fromLLMMessage converts llm.Message to OpenAI ChatCompletionMessage format
 func fromLLMMessage(msg llm.Message) []openai.ChatCompletionMessage {
 	// For OpenAI, we need to handle tool results differently than regular messages
@@ -1477,6 +1485,7 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 	// Direct DeepSeek keeps its legacy replay behavior for catalog-unknown models;
 	// explicit none remains a sentinel that suppresses real reasoning.
 	deepSeek := isDeepSeekBaseURL(baseURL)
+	nvidia := isNVIDIABaseURL(baseURL)
 	resolvedReasoningReplay := ResolveReasoningReplay(baseURL, model.ModelName, s.ReasoningReplay)
 	replayReasoningContent := resolvedReasoningReplay == ReasoningReplayContent || deepSeek && resolvedReasoningReplay == ""
 	for i := range allMessages {
@@ -1486,6 +1495,11 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		}
 		if (replayReasoningContent || deepSeek) && m.Role == "assistant" && len(m.ToolCalls) > 0 && m.ReasoningContent == "" {
 			m.ReasoningContent = " "
+		}
+		// NVIDIA's schema requires content on every message. The OpenAI Go
+		// client otherwise omits an empty content field on tool-call turns.
+		if nvidia && m.Role == "assistant" && len(m.ToolCalls) > 0 && m.Content == "" && len(m.MultiContent) == 0 {
+			m.Content = " "
 		}
 	}
 
@@ -1498,7 +1512,9 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		tools = append(tools, fromLLMTool(t))
 	}
 
-	// Create the OpenAI request
+	// Create the OpenAI request. NVIDIA NIM implements the legacy max_tokens
+	// field; OpenAI and most other compatible providers use
+	// max_completion_tokens for reasoning-aware limits.
 	req := openai.ChatCompletionRequest{
 		Model:      model.ModelName,
 		Messages:   allMessages,
