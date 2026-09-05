@@ -1903,6 +1903,32 @@ func TestIsDeepSeekBaseURL(t *testing.T) {
 	}
 }
 
+func TestIsNVIDIABaseURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"https://integrate.api.nvidia.com/v1", true},
+		{"https://integrate.api.nvidia.com:443/v1", true},
+		{"https://INTEGRATE.API.NVIDIA.COM/v1", true},
+		{"https://api.nvidia.com/v1", false},
+		{"https://example.com/integrate.api.nvidia.com/v1", false},
+		{"", false},
+		{"://bad", false},
+	}
+	for _, tt := range tests {
+		if got := isNVIDIABaseURL(tt.url); got != tt.want {
+			t.Errorf("isNVIDIABaseURL(%q) = %v, want %v", tt.url, got, tt.want)
+		}
+	}
+	if !requiresReasoningContentRoundTrip("https://integrate.api.nvidia.com/v1", "moonshotai/kimi-k3") {
+		t.Error("Kimi-K3 should round-trip reasoning_content through NVIDIA")
+	}
+	if requiresReasoningContentRoundTrip("https://integrate.api.nvidia.com/v1", "meta/llama") {
+		t.Error("unrelated NVIDIA model should not receive reasoning_content")
+	}
+}
+
 func TestToLLMContentsExtractsReasoningContent(t *testing.T) {
 	msg := openai.ChatCompletionMessage{
 		Role:             "assistant",
@@ -2029,6 +2055,71 @@ func TestServiceDoDeepSeekRoundTripsReasoningContent(t *testing.T) {
 	}
 	if !strings.Contains(string(gotBody), `"reasoning_content":"I should call the weather tool."`) {
 		t.Errorf("expected real reasoning_content in request body, got: %s", gotBody)
+	}
+}
+
+func TestServiceDoNVIDIADialect(t *testing.T) {
+	var gotBody []byte
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		resp := openai.ChatCompletionResponse{ID: "x", Choices: []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{Role: "assistant", Content: "ok"}, FinishReason: "stop",
+		}}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse(server.URL)
+	httpc := &http.Client{Transport: rewriteHostTransport{addr: u.Host}}
+	svc := &Service{
+		APIKey:    "k",
+		Model:     modelForTest("moonshotai/kimi-k3"),
+		ModelURL:  "https://integrate.api.nvidia.com/v1",
+		MaxTokens: 16384,
+		HTTPC:     httpc,
+	}
+
+	req := &llm.Request{Messages: []llm.Message{
+		{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "weather?"}}},
+		{Role: llm.MessageRoleAssistant, Content: []llm.Content{
+			{Type: llm.ContentTypeThinking, Thinking: "I should call the weather tool."},
+			{Type: llm.ContentTypeToolUse, ID: "call_1", ToolName: "get_weather", ToolInput: []byte(`{"city":"Paris"}`)},
+		}},
+		{Role: llm.MessageRoleUser, Content: []llm.Content{{
+			Type: llm.ContentTypeToolResult, ToolUseID: "call_1",
+			ToolResult: []llm.Content{{Type: llm.ContentTypeText, Text: "sunny"}},
+		}}},
+	}}
+	if _, err := svc.Do(context.Background(), req); err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("path = %q, want /v1/chat/completions", gotPath)
+	}
+	if body["max_tokens"] != float64(16384) {
+		t.Errorf("max_tokens = %#v, want 16384; body = %s", body["max_tokens"], gotBody)
+	}
+	if _, ok := body["max_completion_tokens"]; ok {
+		t.Errorf("unexpected max_completion_tokens; body = %s", gotBody)
+	}
+	if !strings.Contains(string(gotBody), `"reasoning_content":"I should call the weather tool."`) {
+		t.Errorf("expected reasoning_content round-trip; body = %s", gotBody)
+	}
+	messages, ok := body["messages"].([]any)
+	if !ok || len(messages) < 2 {
+		t.Fatalf("messages = %#v", body["messages"])
+	}
+	assistant, ok := messages[1].(map[string]any)
+	if !ok || assistant["content"] != " " {
+		t.Errorf("assistant content = %#v, want required placeholder", assistant["content"])
 	}
 }
 
