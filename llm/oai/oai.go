@@ -795,6 +795,19 @@ func maxOutputTokens(endpoint, modelName string, configured int) int {
 	return min(cmp.Or(configured, limit), limit)
 }
 
+// isNVIDIABaseURL reports whether the URL points at NVIDIA's hosted NIM API.
+// NIM uses the OpenAI chat protocol with two notable differences: it expects
+// max_tokens rather than max_completion_tokens, and reasoning models such as
+// Kimi-K3 require reasoning_content to round-trip across tool calls.
+func isNVIDIABaseURL(baseURL string) bool {
+	return endpointHostMatches(baseURL, "integrate.api.nvidia.com")
+}
+
+func requiresReasoningContentRoundTrip(baseURL, modelName string) bool {
+	return isDeepSeekBaseURL(baseURL) ||
+		(isNVIDIABaseURL(baseURL) && strings.EqualFold(modelName, "moonshotai/kimi-k3"))
+}
+
 // fromLLMMessage converts llm.Message to OpenAI ChatCompletionMessage format
 func fromLLMMessage(msg llm.Message) []openai.ChatCompletionMessage {
 	// For OpenAI, we need to handle tool results differently than regular messages
@@ -1366,22 +1379,24 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		allMessages = append(allMessages, msgs...)
 	}
 
-	// reasoning_content is a DeepSeek-specific extension to the OpenAI chat
-	// completions API. Other providers (OpenAI, Fireworks, Together, etc.) do
-	// not recognize it and may reject or silently mishandle the field. So we
-	// only forward it when talking to DeepSeek. For DeepSeek with thinking
-	// mode (the default for deepseek-v4-pro), assistant messages that include
-	// tool_calls must carry a reasoning_content field on subsequent turns or
-	// the API returns HTTP 400. If we have a real thinking block we use it
-	// (so the model can continue its prior CoT). Otherwise — e.g. for
-	// assistant turns replayed from history persisted before this fix — we
-	// inject a single-space placeholder so the request remains well-formed.
-	// See https://api-docs.deepseek.com/guides/thinking_mode#tool-calls
-	if isDeepSeekBaseURL(baseURL) {
+	// Some OpenAI-compatible reasoning APIs require reasoning_content to be
+	// returned on subsequent turns that contain tool_calls. Preserve the real
+	// thinking block when available; use a placeholder for legacy history that
+	// predates thinking persistence. Strip the extension for other providers,
+	// which may reject or silently mishandle it.
+	if requiresReasoningContentRoundTrip(baseURL, model.ModelName) {
 		for i := range allMessages {
 			m := &allMessages[i]
-			if m.Role == "assistant" && len(m.ToolCalls) > 0 && m.ReasoningContent == "" {
+			if m.Role != "assistant" || len(m.ToolCalls) == 0 {
+				continue
+			}
+			if m.ReasoningContent == "" {
 				m.ReasoningContent = " "
+			}
+			// NVIDIA's schema requires content on every message. The OpenAI Go
+			// client otherwise omits an empty content field on tool-call turns.
+			if isNVIDIABaseURL(baseURL) && m.Content == "" && len(m.MultiContent) == 0 {
+				m.Content = " "
 			}
 		}
 	} else {
@@ -1399,7 +1414,9 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		tools = append(tools, fromLLMTool(t))
 	}
 
-	// Create the OpenAI request
+	// Create the OpenAI request. NVIDIA NIM implements the legacy max_tokens
+	// field; OpenAI and most other compatible providers use
+	// max_completion_tokens for reasoning-aware limits.
 	req := openai.ChatCompletionRequest{
 		Model:      model.ModelName,
 		Messages:   allMessages,
