@@ -54,7 +54,7 @@ func TestResponsesNativeCitationsPersistAndReplay(t *testing.T) {
 					}
 					return citationHTTPResponse(r, "application/json", response), nil
 				})}
-				svc := &oai.ResponsesService{HTTPC: client, Model: oai.GPT41, ProviderName: provider, ModelURL: "http://provider.test"}
+				svc := &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, HTTPC: client, Model: oai.GPT41, ProviderName: provider, ModelURL: "http://provider.test"}
 				got, err := svc.Do(ctx, &llm.Request{Messages: []llm.Message{llm.UserStringMessage("Research")}})
 				if err != nil {
 					t.Fatal(err)
@@ -145,7 +145,7 @@ func TestResponsesNativeCitationInvalidReplayNeverCallsHTTP(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			svc := &oai.ResponsesService{Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
+			svc := &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
 				calls++
 				// Ingest even unknown/malformed annotations losslessly; replay
 				// owns validation rather than silently dropping unknown fields.
@@ -187,7 +187,7 @@ func TestResponsesCitationPositions(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var payload []byte
-			svc := &oai.ResponsesService{Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
+			svc := &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
 				var err error
 				payload, err = io.ReadAll(r.Body)
 				if err != nil {
@@ -215,7 +215,7 @@ func TestResponsesCitationPositions(t *testing.T) {
 
 func TestResponsesNoCitationHistoryUnchanged(t *testing.T) {
 	var payloads [][]byte
-	svc := &oai.ResponsesService{Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
+	svc := &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, Model: oai.GPT41, HTTPC: &http.Client{Transport: citationRoundTripper(func(r *http.Request) (*http.Response, error) {
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatal(err)
