@@ -54,6 +54,9 @@ export interface BackgroundJob {
   started_at: string;
 }
 
+export type DeviceSubscriptionProvider = "openai" | "kimi";
+export type SubscriptionProvider = "anthropic" | DeviceSubscriptionProvider;
+
 export interface SubscriptionProviderStatus {
   logged_in: boolean;
   status: string;
@@ -62,7 +65,7 @@ export interface SubscriptionProviderStatus {
 
 export interface SubscriptionsStatus {
   credentials_path: string;
-  providers: Record<"anthropic" | "openai", SubscriptionProviderStatus>;
+  providers: Record<SubscriptionProvider, SubscriptionProviderStatus>;
 }
 
 export interface SubscriptionLoginStart {
@@ -259,7 +262,7 @@ class ApiService {
     return response.json();
   }
 
-  async logoutSubscription(provider: "anthropic" | "openai"): Promise<void> {
+  async logoutSubscription(provider: SubscriptionProvider): Promise<void> {
     const response = await fetch(`${this.baseUrl}/subscriptions/${provider}/logout`, {
       method: "POST",
       headers: this.postHeaders,
@@ -269,7 +272,7 @@ class ApiService {
     }
   }
 
-  async startSubscriptionLogin(provider: "anthropic" | "openai"): Promise<SubscriptionLoginStart> {
+  async startSubscriptionLogin(provider: SubscriptionProvider): Promise<SubscriptionLoginStart> {
     const response = await fetch(`${this.baseUrl}/subscriptions/${provider}/login/start`, {
       method: "POST",
       headers: this.postHeaders,
@@ -280,8 +283,11 @@ class ApiService {
     return response.json();
   }
 
-  async pollOpenAISubscriptionLogin(sessionId: string): Promise<{ done: boolean }> {
-    const response = await fetch(`${this.baseUrl}/subscriptions/openai/login/poll`, {
+  async pollDeviceSubscriptionLogin(
+    provider: DeviceSubscriptionProvider,
+    sessionId: string,
+  ): Promise<{ done: boolean }> {
+    const response = await fetch(`${this.baseUrl}/subscriptions/${provider}/login/poll`, {
       method: "POST",
       headers: this.postHeaders,
       body: JSON.stringify({ session_id: sessionId }),

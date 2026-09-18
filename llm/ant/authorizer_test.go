@@ -136,3 +136,33 @@ func TestClaudeCodeIdentityNotDuplicated(t *testing.T) {
 		t.Errorf("identity should not be duplicated, got %d blocks", len(req.System))
 	}
 }
+
+func TestKimiOAuthAuth(t *testing.T) {
+	tokens := &fakeTokenProvider{tok: "first"}
+	auth := KimiOAuthAuth{Tokens: tokens}
+	if !auth.HasCredential() || (KimiOAuthAuth{}).HasCredential() {
+		t.Fatal("HasCredential must reflect the token provider")
+	}
+	if len(auth.BetaHeaders()) != 0 || auth.RequiresClaudeCodeIdentity() {
+		t.Fatal("Kimi must not opt into Claude betas or identity")
+	}
+	for _, token := range []string{"first", "refreshed"} {
+		tokens.tok = token
+		h := http.Header{}
+		if err := auth.SetAuth(context.Background(), h); err != nil {
+			t.Fatal(err)
+		}
+		if len(h) != 1 || h.Get("Authorization") != "Bearer "+token {
+			t.Fatalf("headers = %v, want only the current bearer token", h)
+		}
+	}
+	tokens.err = errors.New("refresh failed")
+	if err := auth.SetAuth(context.Background(), http.Header{}); !errors.Is(err, tokens.err) {
+		t.Fatalf("refresh error = %v, want %v", err, tokens.err)
+	}
+	s := &Service{Auth: auth}
+	req := s.fromLLMRequest(&llm.Request{System: []llm.SystemContent{{Text: "You are Shelley."}}})
+	if len(req.System) != 1 || req.System[0].Text != "You are Shelley." {
+		t.Fatalf("Kimi system prompt = %+v, want unchanged identity", req.System)
+	}
+}
