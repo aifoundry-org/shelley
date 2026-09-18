@@ -434,7 +434,7 @@ func TestFromLLMMessage(t *testing.T) {
 		},
 	}
 
-	got := fromLLMMessage(msg)
+	got := (&Service{}).fromLLMMessage(msg)
 	if got.Role != "assistant" {
 		t.Errorf("fromLLMMessage().Role = %v, want %v", got.Role, "assistant")
 	}
@@ -461,7 +461,7 @@ func TestFromLLMMessage(t *testing.T) {
 
 func TestFromLLMMessageSkipsCorruptThinking(t *testing.T) {
 	// A thinking block with no signature is corrupt and should be skipped.
-	msg := fromLLMMessage(llm.Message{
+	msg := (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeThinking, Thinking: "", Signature: ""},
@@ -472,7 +472,7 @@ func TestFromLLMMessageSkipsCorruptThinking(t *testing.T) {
 	}
 
 	// A thinking block WITH a signature should be kept.
-	msg = fromLLMMessage(llm.Message{
+	msg = (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeThinking, Thinking: "", Signature: "sig"},
@@ -490,7 +490,7 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 	// web-search citation responses) must not serialize that block: Anthropic
 	// rejects "text content blocks must be non-empty", which permanently wedges
 	// the conversation on every subsequent turn.
-	msg := fromLLMMessage(llm.Message{
+	msg := (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeText, Text: "hello"},
@@ -510,7 +510,7 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 
 	// A text block carrying image data (MediaType set, empty Text) is NOT
 	// empty and must be preserved.
-	msg = fromLLMMessage(llm.Message{
+	msg = (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleUser,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeText, Text: "", MediaType: "image/png", Data: "abc"},
