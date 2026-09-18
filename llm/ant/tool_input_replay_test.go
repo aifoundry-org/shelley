@@ -23,11 +23,11 @@ func TestMalformedToolHistoryReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		call := fromLLMMessage(history[0]).Content[0]
+		call := (&Service{}).fromLLMMessage(history[0]).Content[0]
 		if call.Type != "tool_use" || call.ID != "bad" || call.ToolName != "browser" || string(call.ToolInput) != "{}" {
 			t.Fatalf("replayed call = %+v", call)
 		}
-		result := fromLLMMessage(history[1]).Content[0]
+		result := (&Service{}).fromLLMMessage(history[1]).Content[0]
 		if result.Type != "tool_result" || result.ToolUseID != "bad" || !result.ToolError || *result.ToolResult[0].Text != guidance {
 			t.Fatalf("replayed result = %+v", result)
 		}

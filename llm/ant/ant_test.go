@@ -388,7 +388,7 @@ func TestFromLLMMessage(t *testing.T) {
 		},
 	}
 
-	got := fromLLMMessage(msg)
+	got := (&Service{}).fromLLMMessage(msg)
 	if got.Role != "assistant" {
 		t.Errorf("fromLLMMessage().Role = %v, want %v", got.Role, "assistant")
 	}
@@ -415,7 +415,7 @@ func TestFromLLMMessage(t *testing.T) {
 
 func TestFromLLMMessageSkipsCorruptThinking(t *testing.T) {
 	// A thinking block with no signature is corrupt and should be skipped.
-	msg := fromLLMMessage(llm.Message{
+	msg := (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeThinking, Thinking: "", Signature: ""},
@@ -426,7 +426,7 @@ func TestFromLLMMessageSkipsCorruptThinking(t *testing.T) {
 	}
 
 	// A thinking block WITH a signature should be kept.
-	msg = fromLLMMessage(llm.Message{
+	msg = (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeThinking, Thinking: "", Signature: "sig"},
@@ -444,7 +444,7 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 	// web-search citation responses) must not serialize that block: Anthropic
 	// rejects "text content blocks must be non-empty", which permanently wedges
 	// the conversation on every subsequent turn.
-	msg := fromLLMMessage(llm.Message{
+	msg := (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleAssistant,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeText, Text: "hello"},
@@ -464,7 +464,7 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 
 	// A text block carrying image data (MediaType set, empty Text) is NOT
 	// empty and must be preserved.
-	msg = fromLLMMessage(llm.Message{
+	msg = (&Service{}).fromLLMMessage(llm.Message{
 		Role: llm.MessageRoleUser,
 		Content: []llm.Content{
 			{Type: llm.ContentTypeText, Text: "", MediaType: "image/png", Data: "abc"},
@@ -475,6 +475,39 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 	}
 	if msg.Content[0].Type != "image" {
 		t.Errorf("content[0].Type = %q, want \"image\"", msg.Content[0].Type)
+	}
+}
+
+func TestFromLLMMessageSkipsEmptyTextInToolResult(t *testing.T) {
+	// A tool result whose text is empty (e.g. a bash command that produced no
+	// output) must not serialize an empty nested text block: Kimi's
+	// Anthropic-compatible endpoint rejects it ("text content is empty"),
+	// permanently wedging the conversation on every subsequent turn. The
+	// tool_result block itself must survive with "content": [] — Kimi rejects
+	// a tool_result with the content field omitted.
+	msg := (&Service{}).fromLLMMessage(llm.Message{
+		Role: llm.MessageRoleUser,
+		Content: []llm.Content{
+			{Type: llm.ContentTypeToolResult, ToolUseID: "tu_1", ToolResult: []llm.Content{{Type: llm.ContentTypeText, Text: "ok"}}},
+			{Type: llm.ContentTypeToolResult, ToolUseID: "tu_2", ToolResult: []llm.Content{{Type: llm.ContentTypeText, Text: ""}}},
+		},
+	})
+	if len(msg.Content) != 2 {
+		t.Fatalf("expected both tool_result blocks, got %d", len(msg.Content))
+	}
+	if n := len(msg.Content[0].ToolResult); n != 1 {
+		t.Errorf("tool_result tu_1 content blocks = %d, want 1", n)
+	}
+	if n := len(msg.Content[1].ToolResult); n != 0 {
+		t.Errorf("tool_result tu_2 content blocks = %d, want 0", n)
+	}
+	got, err := json.Marshal(msg.Content[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"tool_result","tool_use_id":"tu_2","content":[]}`
+	if string(got) != want {
+		t.Errorf("marshaled tool_result = %s, want %s", got, want)
 	}
 }
 
