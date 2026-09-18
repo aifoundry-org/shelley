@@ -11,6 +11,7 @@ func TestParseLoginArgs(t *testing.T) {
 	}{
 		{"anthropic", []string{"anthropic"}, "anthropic", false},
 		{"openai", []string{"openai"}, "openai", false},
+		{"kimi", []string{"kimi"}, "kimi", false},
 		{"no args", []string{}, "", true},
 		{"unsupported provider", []string{"gemini"}, "", true},
 		{"too many", []string{"anthropic", "extra"}, "", true},
