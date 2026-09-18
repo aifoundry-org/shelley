@@ -324,8 +324,8 @@ func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	// Anthropic models must resolve to the subscription source (highest priority).
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude/ChatGPT subscription" {
-		t.Fatalf("claude-opus-4.8 source = %q, want Claude/ChatGPT subscription", src)
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude/ChatGPT/Kimi subscription" {
+		t.Fatalf("claude-opus-4.8 source = %q, want Claude/ChatGPT/Kimi subscription", src)
 	}
 }
 
@@ -346,7 +346,7 @@ func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
 	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT subscription" {
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT/Kimi subscription" {
 		t.Fatal("subscription source present despite no stored credentials")
 	}
 }
@@ -547,5 +547,40 @@ func TestSystemdListenerIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("Unexpected status code %d, body: %s", resp.StatusCode, body)
+	}
+}
+
+func TestSubscriptionSourceKimi(t *testing.T) {
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	store := &oauth.Store{Path: credPath}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	global := GlobalConfig{CredentialsPath: credPath}
+	if _, ok := subscriptionSource(global, logger); ok {
+		t.Fatal("subscription source exists before login")
+	}
+	if err := store.Save("kimi", oauth.Token{AccessToken: "kimi-test", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	source, ok := subscriptionSource(global, logger)
+	if !ok {
+		t.Fatal("Kimi credentials did not enable subscription source")
+	}
+	built := modelsources.Build(models.All(), []modelsources.Source{source}, &http.Client{}, logger)
+	if findBuiltModelSource(built, "kimi-k3-fireworks") == "" {
+		t.Fatal("Kimi subscription must serve the existing K3 model choice")
+	}
+	if findBuiltModelSource(built, "kimi-k3-subscription") != "" {
+		t.Fatal("Kimi subscription must not add a duplicate K3 choice")
+	}
+	for _, m := range built {
+		if m.Provider != models.ProviderKimiCoding {
+			t.Fatalf("unexpected provider: %s", m.Provider)
+		}
+	}
+	if err := store.Delete("kimi"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := subscriptionSource(global, logger); ok {
+		t.Fatal("subscription source still exists after logout")
 	}
 }

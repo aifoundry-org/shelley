@@ -155,3 +155,49 @@ Commits:
 - httptest servers assert exact headers/bodies.
 - `go test ./llm/... ./models ./modelsources ./cmd/shelley` per commit.
 - UI untouched until/unless a settings surface is added (separate later work).
+
+## Kimi Code subscription integration
+
+Kimi Code uses device-code OAuth and the Anthropic Messages wire protocol.
+Its transport is separate from Moonshot's metered API and Fireworks, but the
+picker has a single **Kimi K3** choice. Signing into Kimi selects the subscription
+route (`k3` on the wire); signing out selects the configured paid route again.
+The established model ID `kimi-k3-fireworks` remains stable across both routes,
+so existing K3 conversations and tier rankings continue to work. There is no
+separate `kimi-k3-subscription` entry and no automatic paid retry on subscription
+errors. **Kimi For Coding** (`kimi-for-coding`) remains a distinct model alias.
+
+Inference uses the international `https://api.kimi.ai/coding` base URL;
+OAuth uses `auth.kimi.ai` and device approval stays on `kimi.ai`.
+Entitlement to subscription models is checked by Kimi on inference requests.
+The protocol/client ID follow Pi's Kimi Code integration
+(`packages/ai/src/auth/oauth/kimi-coding.ts` in `badlogic/pi-mono`). This is
+third-party OAuth integration, not a claim of official Shelley client approval.
+
+### Sign in and test
+
+- In the conversation overflow menu, expand **Subscription accounts**, choose
+  **Kimi Code → Login**, and open the displayed verification link.
+- Sign in directly on Kimi's website and approve the device. Return to Shelley
+  and click **I approved it**. Never paste passwords, access tokens, or refresh tokens
+  into a conversation.
+- Alternatively, run `shelley login kimi`; it waits for browser approval.
+  `shelley login-status kimi` checks stored status and `shelley logout kimi`
+  removes the locally stored credentials.
+- After approval, select a Kimi Code subscription model and test a short reply
+  followed by a harmless tool call. These requests consume subscription quota.
+- The account needs Kimi Code access. Authentication success alone does not
+  establish model entitlement, available quota, or acceptance of Shelley as a
+  client. Provider errors must be surfaced; do not impersonate Kimi CLI or
+  Claude Code to bypass client restrictions.
+
+Credentials use the existing owner-only Shelley credential store under
+`$XDG_CONFIG_HOME/shelley/credentials.json` (normally
+`~/.config/shelley/credentials.json`). Access tokens refresh automatically.
+Disconnecting removes local credentials; it does not revoke the provider-side
+OAuth grant. Use Kimi's account controls for provider-side revocation.
+
+For a safe preview, isolate both the database and `XDG_CONFIG_HOME` from the
+running instance. A preview login then does not alter the running instance's
+credentials. Do not run previews with `-predictable-only` when testing actual
+Kimi inference: that flag deliberately excludes subscription models.

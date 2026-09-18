@@ -206,7 +206,7 @@
               <button
                 v-if="subscriptions?.providers[provider.id]?.logged_in"
                 class="subscriptions-menu-small-btn"
-                :disabled="subscriptionBusy === provider.id"
+                :disabled="subscriptionBusy !== null"
                 @click="logoutSubscription(provider.id)"
               >
                 Logout
@@ -214,15 +214,28 @@
               <button
                 v-else
                 class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
-                :disabled="subscriptionBusy === provider.id"
+                :disabled="subscriptionBusy !== null"
                 @click="startSubscriptionLogin(provider.id)"
               >
                 Login
               </button>
             </div>
 
+            <div class="subscriptions-menu-muted">
+              <template v-if="provider.id === 'kimi'">
+                Kimi sign-in uses a third-party OAuth client integration.
+              </template>
+              <template v-else>
+                Unofficial {{ provider.label }} subscription access is undocumented and may violate
+                provider terms.
+              </template>
+            </div>
+
             <div
-              v-if="subscriptionLogin?.provider === 'openai' && provider.id === 'openai'"
+              v-if="
+                subscriptionLogin?.provider === provider.id &&
+                (provider.id === 'openai' || provider.id === 'kimi')
+              "
               class="subscriptions-login-box"
             >
               <div>Open this URL and enter the code:</div>
@@ -236,8 +249,8 @@
               <div class="subscriptions-login-code">{{ subscriptionLogin.session.user_code }}</div>
               <button
                 class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
-                :disabled="subscriptionLogin.polling || subscriptionBusy === 'openai'"
-                @click="pollOpenAILogin"
+                :disabled="subscriptionLogin.polling || subscriptionBusy !== null"
+                @click="pollDeviceLogin"
               >
                 I approved it
               </button>
@@ -255,7 +268,7 @@
               />
               <button
                 class="subscriptions-menu-small-btn subscriptions-menu-primary-btn"
-                :disabled="!subscriptionLogin.code.trim() || subscriptionBusy === 'anthropic'"
+                :disabled="!subscriptionLogin.code.trim() || subscriptionBusy !== null"
                 @click="completeAnthropicLogin"
               >
                 Complete login
@@ -437,7 +450,12 @@ import Popover from "primevue/popover";
 import Button from "primevue/button";
 import Select from "primevue/select";
 import OverflowDotsIcon from "./OverflowDotsIcon.vue";
-import { api, type SubscriptionLoginStart, type SubscriptionsStatus } from "../../services/api";
+import {
+  api,
+  type SubscriptionLoginStart,
+  type SubscriptionProvider,
+  type SubscriptionsStatus,
+} from "../../services/api";
 import type { Link } from "../../types";
 import type { Locale } from "../../i18n/types";
 import { useI18n } from "../composables/i18n";
@@ -515,10 +533,10 @@ function onExternalLink(url: string) {
   hide();
 }
 
-type SubscriptionProvider = "anthropic" | "openai";
 const subscriptionProviders: Array<{ id: SubscriptionProvider; label: string }> = [
   { id: "anthropic", label: "Anthropic" },
   { id: "openai", label: "OpenAI" },
+  { id: "kimi", label: "Kimi" },
 ];
 const subscriptionsExpanded = ref(false);
 const subscriptions = ref<SubscriptionsStatus | null>(null);
@@ -556,6 +574,7 @@ async function logoutSubscription(provider: SubscriptionProvider) {
   subscriptionError.value = null;
   try {
     await api.logoutSubscription(provider);
+    if (subscriptionLogin.value?.provider === provider) subscriptionLogin.value = null;
     await refreshAfterSubscriptionChange();
   } catch (err) {
     subscriptionError.value = err instanceof Error ? err.message : String(err);
@@ -580,26 +599,26 @@ async function startSubscriptionLogin(provider: SubscriptionProvider) {
   }
 }
 
-async function pollOpenAILogin() {
-  if (!subscriptionLogin.value || subscriptionLogin.value.provider !== "openai") return;
-  subscriptionLogin.value.polling = true;
-  subscriptionBusy.value = "openai";
+async function pollDeviceLogin() {
+  const login = subscriptionLogin.value;
+  if (!login || login.provider === "anthropic") return;
+  login.polling = true;
+  subscriptionBusy.value = login.provider;
   subscriptionError.value = null;
   try {
-    const result = await api.pollOpenAISubscriptionLogin(
-      subscriptionLogin.value.session.session_id,
-    );
+    const result = await api.pollDeviceSubscriptionLogin(login.provider, login.session.session_id);
     if (result.done) {
       subscriptionLogin.value = null;
       await refreshAfterSubscriptionChange();
     } else {
-      subscriptionError.value = "Not approved yet. Approve in the browser, then try again.";
+      subscriptionError.value =
+        "Sign-in is not complete yet. Approve in the browser, then wait a few seconds and try again.";
     }
   } catch (err) {
     subscriptionError.value = err instanceof Error ? err.message : String(err);
   } finally {
     subscriptionBusy.value = null;
-    if (subscriptionLogin.value) subscriptionLogin.value.polling = false;
+    login.polling = false;
   }
 }
 

@@ -117,11 +117,11 @@ func load() map[string]providerEntry {
 }
 
 // knownHosts maps the well-known first-party API hosts to their models.dev
-// provider keys. models.dev does not record an "api" URL for these, so they
-// are seeded into the host index manually.
+// provider keys, including regional endpoints absent from models.dev.
 var knownHosts = map[string]string{
 	"api.anthropic.com":                 "anthropic",
 	"api.openai.com":                    "openai",
+	"api.kimi.ai":                       "kimi-for-coding",
 	"generativelanguage.googleapis.com": "google",
 }
 

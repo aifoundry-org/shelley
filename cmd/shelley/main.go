@@ -84,7 +84,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "  tour <chunks|verify|attach|show> ...  Commit guided tours (git notes)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  exe-scroll [args]              Run the embedded exe-scroll binary\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  unpack-template <name> <dir>  Unpack a project template to a directory\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  login <provider>              Log in with a subscription (OAuth); provider: anthropic|openai\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  login <provider>              Log in with a subscription (OAuth); provider: anthropic|openai|kimi\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  logout <provider>             Remove stored subscription credentials\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  login-status <provider>       Show subscription login status\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  version                       Print version information as JSON\n")
@@ -515,8 +515,8 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shell
 
 	var sources []modelsources.Source
 
-	// 0. Subscription (Claude OAuth). Highest priority: if the user has logged
-	// in with `shelley login anthropic`, Anthropic models are served from their
+	// 0. Subscription (OAuth). Highest priority: if the user has logged
+	// in with `shelley login`, provider models are served from their
 	// subscription rather than via API keys/gateway.
 	if src, ok := subscriptionSource(global, logger); ok {
 		sources = append(sources, src)
@@ -601,7 +601,7 @@ func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.
 	store := &oauth.Store{Path: credPath}
 	httpc := llmhttp.NewClient(nil)
 
-	var anthropicTS, openAITS *oauth.TokenSource
+	var anthropicTS, openAITS, kimiTS *oauth.TokenSource
 	if _, err := store.Load("anthropic"); err == nil {
 		anthropicTS = oauth.NewAnthropicTokenSource(store, httpc)
 		logger.Info("Using Claude subscription credentials", "path", credPath)
@@ -610,10 +610,14 @@ func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.
 		openAITS = oauth.NewOpenAITokenSource(store, httpc)
 		logger.Info("Using ChatGPT subscription credentials", "path", credPath)
 	}
-	if anthropicTS == nil && openAITS == nil {
+	if _, err := store.Load("kimi"); err == nil {
+		kimiTS = oauth.NewKimiTokenSource(store, httpc)
+		logger.Info("Using Kimi Code subscription credentials", "path", credPath)
+	}
+	if anthropicTS == nil && openAITS == nil && kimiTS == nil {
 		return modelsources.Source{}, false
 	}
-	return modelsources.Subscription(anthropicTS, openAITS), true
+	return modelsources.Subscription(anthropicTS, openAITS, kimiTS), true
 }
 
 // runModels prints the materialized list of built-in models the server

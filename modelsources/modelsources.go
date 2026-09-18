@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"iter"
 	"log/slog"
 	"net/http"
 	"os"
@@ -39,7 +40,8 @@ type providerConn struct {
 
 // Source is one origin from which built-in Shelley models can be
 // materialized into the server's Manager. Sources are evaluated in
-// order; the first to claim an ID wins.
+// order; the first to claim an ID wins. This selects one service at build time,
+// never a runtime fallback chain after authentication or quota failures.
 type Source struct {
 	// label is the default human-readable origin shown in the UI.
 	label string
@@ -51,6 +53,10 @@ type Source struct {
 	// providers is the per-provider connection config. A nil entry means
 	// this source does not serve that provider.
 	providers map[models.Provider]*providerConn
+
+	// catalogOverrides replaces a catalog route before provider selection,
+	// preserving its logical ID and position while changing all route metadata.
+	catalogOverrides map[string]models.Model
 
 	// providerLabels overrides label on a per-provider basis (used for
 	// the env source where each provider has its own env-var name).
@@ -64,6 +70,20 @@ type Source struct {
 	// source (used by the subscription source to inject OAuth-backed
 	// services). conn is the matched providerConn for the model.
 	buildService func(m models.Model, conn *providerConn, httpc *http.Client) llm.Service
+}
+
+// catalogModels yields this source's routes and matching connections.
+func (s *Source) catalogModels(catalog []models.Model) iter.Seq2[models.Model, *providerConn] {
+	return func(yield func(models.Model, *providerConn) bool) {
+		for _, m := range catalog {
+			if override, ok := s.catalogOverrides[m.ID]; ok {
+				m = override
+			}
+			if conn := s.providers[m.Provider]; conn != nil && !yield(m, conn) {
+				return
+			}
+		}
+	}
 }
 
 func (s *Source) labelFor(p models.Provider) string {
@@ -215,11 +235,7 @@ func Build(catalog []models.Model, sources []Source, httpc *http.Client, logger 
 			}
 			continue
 		}
-		for _, m := range catalog {
-			conn := src.providers[m.Provider]
-			if conn == nil {
-				continue
-			}
+		for m, conn := range src.catalogModels(catalog) {
 			id := m.ID + src.idSuffix
 			if seen[id] {
 				continue
@@ -260,10 +276,8 @@ func nonIntegrationModelIDs(catalog []models.Model, sources []Source) map[string
 		if src.integration != nil {
 			continue
 		}
-		for _, model := range catalog {
-			if src.providers[model.Provider] != nil {
-				ids[model.ID+src.idSuffix] = true
-			}
+		for model := range src.catalogModels(catalog) {
+			ids[model.ID+src.idSuffix] = true
 		}
 	}
 	return ids

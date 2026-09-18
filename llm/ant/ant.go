@@ -67,7 +67,7 @@ func ClaudeModelName(userName string) string {
 	}
 }
 
-func (s *Service) Provider() string { return "anthropic" }
+func (s *Service) Provider() string { return cmp.Or(s.ProviderName, "anthropic") }
 
 func (s *Service) SupportsReasoning() bool {
 	caps, found := modelsdev.LookupReasoningCapabilities(s.URL, cmp.Or(s.Model, DefaultModel))
@@ -78,6 +78,9 @@ func (s *Service) SupportsReasoning() bool {
 // Budget-token and unknown models return nil and retain the historical
 // standard-level fallback.
 func (s *Service) SupportedReasoningLevels() []llm.ThinkingLevel {
+	if s.ReasoningLevels != nil {
+		return append([]llm.ThinkingLevel(nil), s.ReasoningLevels...)
+	}
 	caps, found := modelsdev.LookupReasoningCapabilities(s.URL, cmp.Or(s.Model, DefaultModel))
 	if !found {
 		return nil
@@ -149,9 +152,14 @@ func (s *Service) MaxImageBytes() int {
 	return 5 * 1024 * 1024
 }
 
-// Service provides Claude completions.
+// Service provides completions over the Anthropic Messages protocol.
 // Fields should not be altered concurrently with calling any method on Service.
 type Service struct {
+	ProviderName                string              // defaults to anthropic; compatible providers use their own identity
+	ForceAdaptiveThinking       bool                // compatible providers that use adaptive thinking with non-Claude model IDs
+	AllowEmptyThinkingSignature bool                // compatible providers that emit unsigned thinking blocks
+	ReasoningLevels             []llm.ThinkingLevel // explicit provider-specific levels; nil uses models.dev
+
 	HTTPC                 *http.Client      // defaults to http.DefaultClient if nil
 	URL                   string            // defaults to DefaultURL if empty
 	Auth                  Authorizer        // must be non-nil; supplies credentials
@@ -347,7 +355,7 @@ func useAdaptiveThinking(model string) bool {
 
 func (s *Service) messageOrigin(model string) llm.MessageOrigin {
 	return llm.MessageOrigin{
-		Provider:  "anthropic",
+		Provider:  s.Provider(),
 		Transport: "anthropic-messages:" + transportIdentity(cmp.Or(s.URL, DefaultURL)),
 		Model:     model,
 	}
@@ -525,6 +533,19 @@ var (
 		"model_context_window_exceeded": llm.StopReasonMaxTokens,
 	}
 )
+
+// MarshalJSON preserves an explicit empty signature on unsigned thinking
+// blocks. Kimi accepts these; Claude filters them before serialization.
+func (c content) MarshalJSON() ([]byte, error) {
+	type wireContent content
+	if c.Type == "thinking" && c.Signature == "" {
+		return json.Marshal(struct {
+			wireContent
+			Signature string `json:"signature"`
+		}{wireContent(c), ""})
+	}
+	return json.Marshal(wireContent(c))
+}
 
 func fromLLMCache(c bool) json.RawMessage {
 	if !c {
@@ -739,12 +760,12 @@ func sanitizeServerToolBlocks(msgs []llm.Message) []llm.Message {
 	return out
 }
 
-func fromLLMMessage(msg llm.Message) message {
+func (s *Service) fromLLMMessage(msg llm.Message) message {
 	var contents []content
 	for _, c := range msg.Content {
-		// Skip thinking blocks with no signature — they're corrupt/incomplete
-		// and the API rejects them.
-		if c.Type == llm.ContentTypeThinking && c.Signature == "" {
+		// Claude rejects unsigned thinking; compatible providers may explicitly
+		// allow it. Completely empty unsigned blocks are never useful history.
+		if c.Type == llm.ContentTypeThinking && c.Signature == "" && (!s.AllowEmptyThinkingSignature || c.Thinking == "") {
 			continue
 		}
 		// Skip empty text blocks. Anthropic rejects requests whose history
@@ -831,7 +852,7 @@ func (s *Service) buildRequest(r *llm.Request, stripThinking bool) *request {
 		if stripThinking && m.Role == llm.MessageRoleAssistant {
 			m = stripThinkingBlocks(m)
 		}
-		msg := fromLLMMessage(m)
+		msg := s.fromLLMMessage(m)
 		if len(msg.Content) > 0 {
 			messages = append(messages, msg)
 		}
@@ -845,7 +866,18 @@ func (s *Service) buildRequest(r *llm.Request, stripThinking bool) *request {
 		System:     s.systemBlocks(r),
 	}
 
-	applyAnthropicThinking(req, model, llm.EffectiveThinkingLevel(s.ThinkingLevel, r.ThinkingLevel), maxTokens, s.supportsThinkingBinding())
+	level := llm.EffectiveThinkingLevel(s.ThinkingLevel, r.ThinkingLevel)
+	if s.ForceAdaptiveThinking {
+		level = llm.ClampThinkingLevel(level, s.SupportedReasoningLevels())
+		if level == llm.ThinkingLevelOff || level == llm.ThinkingLevelDefault {
+			req.Thinking = &thinking{Type: "disabled"}
+		} else {
+			req.Thinking = &thinking{Type: "adaptive", Display: "summarized"}
+			req.OutputConfig = &outputConfig{Effort: level.ThinkingEffort()}
+		}
+	} else {
+		applyAnthropicThinking(req, model, level, maxTokens, s.supportsThinkingBinding())
+	}
 	return req
 }
 
@@ -1330,7 +1362,7 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 			retryAfter = 0
 			slog.WarnContext(ctx, "anthropic request sleep before retry", "sleep", sleep, "attempts", attempts, "elapsed", time.Since(retryStart).Round(time.Second), "last_error", lastErrSummary)
 			if ir.OnRetry != nil {
-				ir.OnRetry(llm.RetryEvent{Attempt: attempts + 1, Sleep: sleep, Err: lastErrSummary, Provider: "anthropic", Model: cmp.Or(s.Model, DefaultModel)})
+				ir.OnRetry(llm.RetryEvent{Attempt: attempts + 1, Sleep: sleep, Err: lastErrSummary, Provider: s.Provider(), Model: cmp.Or(s.Model, DefaultModel)})
 			}
 			select {
 			case <-time.After(sleep):
@@ -1382,7 +1414,7 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 
 			endTime := time.Now()
 			for _, entry := range response.InputTransformations {
-				slog.WarnContext(ctx, "anthropic_input_transformation", "provider", "anthropic",
+				slog.WarnContext(ctx, "anthropic_input_transformation", "provider", s.Provider(),
 					"model", response.Model, "request_id", resp.Header.Get("Request-Id"), "response_id", response.ID,
 					"type", entry.Type, "path", entry.Path, "reason", entry.Reason)
 			}

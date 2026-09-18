@@ -4438,10 +4438,12 @@ type subscriptionsResponse struct {
 }
 
 type subscriptionLoginSession struct {
-	Provider string
-	OpenAI   *oauth.OpenAIDeviceFlow
-	Device   *oauth.DeviceAuth
-	Claude   *oauth.AnthropicLoginFlow
+	Provider   string
+	OpenAI     *oauth.OpenAIDeviceFlow
+	Device     *oauth.DeviceAuth
+	Kimi       *oauth.KimiDeviceFlow
+	KimiDevice *oauth.KimiDeviceAuth
+	Claude     *oauth.AnthropicLoginFlow
 }
 
 func (s *Server) subscriptionStore() *oauth.Store {
@@ -4453,7 +4455,7 @@ func (s *Server) subscriptionStore() *oauth.Store {
 }
 
 func validSubscriptionProvider(provider string) bool {
-	return provider == "anthropic" || provider == "openai"
+	return provider == "anthropic" || provider == "openai" || provider == "kimi"
 }
 
 func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -4463,7 +4465,7 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 		CredentialsPath: store.Path,
 		Providers:       map[string]subscriptionProviderStatus{},
 	}
-	for _, provider := range []string{"anthropic", "openai"} {
+	for _, provider := range []string{"anthropic", "openai", "kimi"} {
 		st := subscriptionProviderStatus{Status: oauth.Status(store, provider, now)}
 		if tok, err := store.Load(provider); err == nil {
 			st.LoggedIn = true
@@ -4503,7 +4505,8 @@ func (s *Server) handleSubscriptionLoginStart(w http.ResponseWriter, r *http.Req
 	sessionID := randomSessionID()
 	sess := subscriptionLoginSession{Provider: provider}
 	resp := map[string]string{"session_id": sessionID}
-	if provider == "openai" {
+	switch provider {
+	case "openai":
 		flow := oauth.NewOpenAIDeviceFlow(store, llmhttp.NewClient(nil))
 		device, err := flow.Start(r.Context())
 		if err != nil {
@@ -4514,7 +4517,18 @@ func (s *Server) handleSubscriptionLoginStart(w http.ResponseWriter, r *http.Req
 		sess.Device = device
 		resp["verification_url"] = device.VerificationURL
 		resp["user_code"] = device.UserCode
-	} else {
+	case "kimi":
+		flow := oauth.NewKimiDeviceFlow(store, llmhttp.NewClient(nil))
+		device, err := flow.Start(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		sess.Kimi = flow
+		sess.KimiDevice = device
+		resp["verification_url"] = device.VerificationURL
+		resp["user_code"] = device.UserCode
+	case "anthropic":
 		flow := oauth.NewAnthropicLoginFlow(store, llmhttp.NewClient(nil))
 		sess.Claude = flow
 		resp["authorize_url"] = flow.AuthorizeURL()
@@ -4533,8 +4547,8 @@ type subscriptionLoginRequest struct {
 
 func (s *Server) handleSubscriptionLoginPoll(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if provider != "openai" {
-		http.Error(w, "poll is only supported for openai", http.StatusBadRequest)
+	if provider != "openai" && provider != "kimi" {
+		http.Error(w, "poll is only supported for openai and kimi", http.StatusBadRequest)
 		return
 	}
 	var req subscriptionLoginRequest
@@ -4545,11 +4559,19 @@ func (s *Server) handleSubscriptionLoginPoll(w http.ResponseWriter, r *http.Requ
 	s.subscriptionSessionsMu.Lock()
 	sess, ok := s.subscriptionSessions[req.SessionID]
 	s.subscriptionSessionsMu.Unlock()
-	if !ok || sess.Provider != provider || sess.OpenAI == nil || sess.Device == nil {
+	if !ok || sess.Provider != provider ||
+		(provider == "openai" && (sess.OpenAI == nil || sess.Device == nil)) ||
+		(provider == "kimi" && (sess.Kimi == nil || sess.KimiDevice == nil)) {
 		http.Error(w, "login session not found", http.StatusNotFound)
 		return
 	}
-	done, err := sess.OpenAI.TryPoll(r.Context(), sess.Device)
+	var done bool
+	var err error
+	if provider == "kimi" {
+		done, err = sess.Kimi.TryPoll(r.Context(), sess.KimiDevice)
+	} else {
+		done, err = sess.OpenAI.TryPoll(r.Context(), sess.Device)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
