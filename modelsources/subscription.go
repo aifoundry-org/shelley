@@ -17,34 +17,46 @@ import (
 //
 //   - anthropic: Claude Pro/Max OAuth (Anthropic Messages models).
 //   - openai: ChatGPT Plus/Pro OAuth via the Codex backend (Responses models).
+//   - kimi: Kimi Code subscription OAuth (Anthropic Messages models).
 //
 // NOTE: Using subscription credentials from a non-official client is
 // undocumented and may violate the provider's terms of service. This source is
 // only wired in when the user has explicitly logged in.
-func Subscription(anthropicTS, openAITS *oauth.TokenSource) Source {
+func Subscription(anthropicTS, openAITS, kimiTS *oauth.TokenSource) Source {
 	providers := map[models.Provider]*providerConn{}
+	overrides := map[string]models.Model{}
 	if anthropicTS != nil {
 		providers[models.ProviderAnthropic] = &providerConn{}
 	}
 	if openAITS != nil {
 		providers[models.ProviderOpenAI] = &providerConn{}
 	}
+	if kimiTS != nil {
+		providers[models.ProviderKimiCoding] = &providerConn{}
+		k3 := models.KimiK3Coding()
+		overrides[k3.ID] = k3
+	}
 	return Source{
-		label:     "Claude/ChatGPT subscription",
-		providers: providers,
+		label:            "Claude/ChatGPT/Kimi subscription",
+		providers:        providers,
+		catalogOverrides: overrides,
 		buildService: func(m models.Model, _ *providerConn, httpc *http.Client) llm.Service {
-			return subscriptionService(m, anthropicTS, openAITS, httpc)
+			return subscriptionService(m, anthropicTS, openAITS, kimiTS, httpc)
 		},
 	}
 }
 
 // subscriptionService builds the catalog model's normal service (preserving
 // every per-model field) and swaps in the OAuth authorizer for the provider.
-func subscriptionService(m models.Model, anthropicTS, openAITS *oauth.TokenSource, httpc *http.Client) llm.Service {
+func subscriptionService(m models.Model, anthropicTS, openAITS, kimiTS *oauth.TokenSource, httpc *http.Client) llm.Service {
 	svc := m.Build("", "", httpc)
 	switch s := svc.(type) {
 	case *ant.Service:
-		s.Auth = ant.OAuthAuth{Tokens: anthropicTS}
+		if m.Provider == models.ProviderKimiCoding {
+			s.Auth = ant.KimiOAuthAuth{Tokens: kimiTS}
+		} else {
+			s.Auth = ant.OAuthAuth{Tokens: anthropicTS}
+		}
 		return s
 	case *oai.ResponsesService:
 		s.Auth = oai.OAuthAuth{Tokens: openAITS}

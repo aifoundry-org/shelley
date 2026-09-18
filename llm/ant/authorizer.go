@@ -75,3 +75,24 @@ func (a OAuthAuth) BetaHeaders() []string {
 
 func (a OAuthAuth) RequiresClaudeCodeIdentity() bool { return true }
 func (a OAuthAuth) HasCredential() bool              { return a.Tokens != nil }
+
+// KimiOAuthAuth authenticates Kimi Code subscription requests. Unlike Claude
+// subscription OAuth it needs only a fresh bearer token, not CLI impersonation.
+type KimiOAuthAuth struct {
+	Tokens TokenProvider
+}
+
+var _ Authorizer = KimiOAuthAuth{}
+
+func (a KimiOAuthAuth) SetAuth(ctx context.Context, h http.Header) error {
+	tok, err := a.Tokens.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	h.Set("Authorization", "Bearer "+tok)
+	return nil
+}
+
+func (a KimiOAuthAuth) BetaHeaders() []string            { return nil }
+func (a KimiOAuthAuth) RequiresClaudeCodeIdentity() bool { return false }
+func (a KimiOAuthAuth) HasCredential() bool              { return a.Tokens != nil }
