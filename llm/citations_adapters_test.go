@@ -30,8 +30,10 @@ func TestCitationAdapterBoundaries(t *testing.T) {
 		contentType string
 	}{
 		{
-			name:        "anthropic",
-			service:     func(c *http.Client) llm.Service { return &ant.Service{HTTPC: c, URL: "http://provider.test/messages"} },
+			name: "anthropic",
+			service: func(c *http.Client) llm.Service {
+				return &ant.Service{Auth: ant.APIKeyAuth{Key: "test-key"}, HTTPC: c, URL: "http://provider.test/messages"}
+			},
 			response:    "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
 			contentType: "text/event-stream",
 		},
@@ -46,7 +48,7 @@ func TestCitationAdapterBoundaries(t *testing.T) {
 		{
 			name: "openai-responses",
 			service: func(c *http.Client) llm.Service {
-				return &oai.ResponsesService{HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test"}
+				return &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test"}
 			},
 			response:    `{"id":"test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`,
 			contentType: "application/json",
@@ -54,7 +56,7 @@ func TestCitationAdapterBoundaries(t *testing.T) {
 		{
 			name: "openai-responses/fireworks",
 			service: func(c *http.Client) llm.Service {
-				return &oai.ResponsesService{HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test", ProviderName: "fireworks"}
+				return &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test", ProviderName: "fireworks"}
 			},
 			response:    `{"id":"test","status":"completed","output":[]}`,
 			contentType: "application/json",
@@ -62,7 +64,7 @@ func TestCitationAdapterBoundaries(t *testing.T) {
 		{
 			name: "openai-responses/xai",
 			service: func(c *http.Client) llm.Service {
-				return &oai.ResponsesService{HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test", ProviderName: "xai"}
+				return &oai.ResponsesService{Auth: oai.APIKeyAuth{Key: "test-key"}, HTTPC: c, Model: oai.GPT41, ModelURL: "http://provider.test", ProviderName: "xai"}
 			},
 			response:    `{"id":"test","status":"completed","output":[]}`,
 			contentType: "application/json",

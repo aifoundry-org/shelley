@@ -88,7 +88,7 @@ func TestThinkingOriginSwitchBackAndActiveToolContinuation(t *testing.T) {
 }
 
 func TestAnthropicOriginJSONRoundTrip(t *testing.T) {
-	s := &Service{Model: Claude46Opus, ThinkingLevel: llm.ThinkingLevelLow}
+	s := &Service{Auth: APIKeyAuth{Key: "test-key"}, Model: Claude46Opus, ThinkingLevel: llm.ThinkingLevelLow}
 	s.HTTPC = &http.Client{Transport: &roundTripFunc{fn: func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(mockSSEResponse("msg", Claude46Opus, "answer", 1, 1)))}, nil
 	}}}
