@@ -157,6 +157,9 @@ function withMcpSelections(request: ChatRequest): ChatRequest {
   };
 }
 
+export type DeviceSubscriptionProvider = "openai" | "kimi";
+export type SubscriptionProvider = "anthropic" | DeviceSubscriptionProvider;
+
 export interface SubscriptionProviderStatus {
   logged_in: boolean;
   status: string;
@@ -165,7 +168,7 @@ export interface SubscriptionProviderStatus {
 
 export interface SubscriptionsStatus {
   credentials_path: string;
-  providers: Record<"anthropic" | "openai", SubscriptionProviderStatus>;
+  providers: Record<SubscriptionProvider, SubscriptionProviderStatus>;
 }
 
 export interface SubscriptionLoginStart {
@@ -313,16 +316,19 @@ class ApiService {
     return apiJSON("/api/subscriptions", "Failed to get subscriptions");
   }
 
-  async logoutSubscription(provider: "anthropic" | "openai"): Promise<void> {
+  async logoutSubscription(provider: SubscriptionProvider): Promise<void> {
     await apiFetch(`/api/subscriptions/${provider}/logout`, "Failed to log out", sendJSON("POST"));
   }
 
-  async startSubscriptionLogin(provider: "anthropic" | "openai"): Promise<SubscriptionLoginStart> {
+  async startSubscriptionLogin(provider: SubscriptionProvider): Promise<SubscriptionLoginStart> {
     return apiJSON(`/api/subscriptions/${provider}/login/start`, "Failed to start login", "POST");
   }
 
-  async pollOpenAISubscriptionLogin(sessionId: string): Promise<{ done: boolean }> {
-    return apiJSON("/api/subscriptions/openai/login/poll", "Failed to poll login", "POST", {
+  async pollDeviceSubscriptionLogin(
+    provider: DeviceSubscriptionProvider,
+    sessionId: string,
+  ): Promise<{ done: boolean }> {
+    return apiJSON(`/api/subscriptions/${provider}/login/poll`, "Failed to poll login", "POST", {
       session_id: sessionId,
     });
   }

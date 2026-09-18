@@ -1,6 +1,7 @@
 package models
 
 import (
+	"cmp"
 	"net/http"
 
 	"shelley.exe.dev/db/generated"
@@ -29,7 +30,9 @@ type ServiceConfig struct {
 	// replace its ModelName and SupportsImages.
 	OpenAIModel oai.Model
 	// ProviderName is the upstream vendor ("openai", "xai", "fireworks",
-	// ...). OpenAI-protocol services key wire quirks and server tools on it.
+	// ...). OpenAI-protocol services key wire quirks and server tools on it;
+	// Anthropic-protocol services report it as their provider identity
+	// ("" means anthropic).
 	ProviderName string
 	// ThinkingBinding sends Anthropic drop_block binding controls. Only set
 	// it when the backend is known to be first-party Anthropic; the service
@@ -40,6 +43,15 @@ type ServiceConfig struct {
 	ReasoningEffort  string
 	ReasoningReplay  oai.ReasoningReplay
 	DisableReasoning bool
+	// ThinkingLevel is the service's default level; zero uses medium.
+	ThinkingLevel llm.ThinkingLevel
+
+	// ReasoningLevels, ForceAdaptiveThinking and AllowEmptyThinkingSignature
+	// adapt the Anthropic protocol to compatible non-Claude providers (see
+	// ant.Service); other protocols ignore them.
+	ReasoningLevels             []llm.ThinkingLevel
+	ForceAdaptiveThinking       bool
+	AllowEmptyThinkingSignature bool
 }
 
 // APIEndpoint appends apiType's protocol path to a bare base URL (origin plus
@@ -64,19 +76,23 @@ func APIEndpoint(apiType APIType, baseURL string) string {
 func NewService(cfg ServiceConfig) llm.Service {
 	oaiModel := cfg.OpenAIModel
 	oaiModel.ModelName, oaiModel.SupportsImages = cfg.Model, cfg.SupportsImages
+	thinkingLevel := cmp.Or(cfg.ThinkingLevel, llm.ThinkingLevelMedium)
 	switch cfg.APIType {
 	case APITypeAnthropicMessages:
 		return &ant.Service{
 			URL: cfg.URL, Auth: ant.APIKeyAuth{Key: cfg.APIKey}, HTTPC: cfg.HTTPC,
 			Model: cfg.Model, SupportsImages_: cfg.SupportsImages, MaxTokens: cfg.MaxTokens,
-			ThinkingLevel: llm.ThinkingLevelMedium, EnableThinkingBinding: cfg.ThinkingBinding,
-			DisableReasoning: cfg.DisableReasoning,
+			ProviderName:  cfg.ProviderName,
+			ThinkingLevel: thinkingLevel, EnableThinkingBinding: cfg.ThinkingBinding,
+			DisableReasoning: cfg.DisableReasoning, ReasoningLevels: cfg.ReasoningLevels,
+			ForceAdaptiveThinking:       cfg.ForceAdaptiveThinking,
+			AllowEmptyThinkingSignature: cfg.AllowEmptyThinkingSignature,
 		}
 	case APITypeOpenAIResponses:
 		return &oai.ResponsesService{
 			ModelURL: cfg.URL, Auth: oai.APIKeyAuth{Key: cfg.APIKey}, HTTPC: cfg.HTTPC,
 			Model: oaiModel, MaxTokens: cfg.MaxTokens, ProviderName: cfg.ProviderName,
-			ThinkingLevel: llm.ThinkingLevelMedium, ReasoningEffort: cfg.ReasoningEffort,
+			ThinkingLevel: thinkingLevel, ReasoningEffort: cfg.ReasoningEffort,
 			ReasoningReplay: cfg.ReasoningReplay, DisableReasoning: cfg.DisableReasoning,
 		}
 	case APITypeOpenAIChat:
@@ -105,15 +121,20 @@ var customAPITypes = map[string]APIType{
 }
 
 // customServiceConfig is the ServiceConfig for a custom model row. Custom
-// endpoints are arbitrary, so ProviderName is the generic "openai" and
+// endpoints are arbitrary, so ProviderName is the generic "openai" (left
+// empty for the Anthropic protocol, which then reports anthropic) and
 // Anthropic thinking binding is left to the service's native-URL detection.
 func customServiceConfig(model *generated.Model, httpc *http.Client) (ServiceConfig, bool) {
 	apiType, ok := customAPITypes[model.ProviderType]
+	providerName := "openai"
+	if apiType == APITypeAnthropicMessages {
+		providerName = ""
+	}
 	return ServiceConfig{
 		APIType: apiType, URL: model.Endpoint, APIKey: model.ApiKey, HTTPC: httpc,
 		Model:           model.ModelName,
 		SupportsImages:  ResolveSupportsImages(model.Endpoint, model.ModelName, model.ImageSupport),
-		ProviderName:    "openai",
+		ProviderName:    providerName,
 		MaxTokens:       int(model.MaxTokens),
 		ReasoningEffort: model.ReasoningEffort,
 		ReasoningReplay: oai.ReasoningReplay(model.ReasoningReplay),

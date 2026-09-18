@@ -29,12 +29,13 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI    Provider = "openai"
-	ProviderAnthropic Provider = "anthropic"
-	ProviderFireworks Provider = "fireworks"
-	ProviderGemini    Provider = "gemini"
-	ProviderXAI       Provider = "xai"
-	ProviderBuiltIn   Provider = "builtin"
+	ProviderOpenAI     Provider = "openai"
+	ProviderAnthropic  Provider = "anthropic"
+	ProviderFireworks  Provider = "fireworks"
+	ProviderKimiCoding Provider = "kimi-coding"
+	ProviderGemini     Provider = "gemini"
+	ProviderXAI        Provider = "xai"
+	ProviderBuiltIn    Provider = "builtin"
 )
 
 // SourceCustomLabel is the label used for custom (DB-backed) models.
@@ -45,11 +46,12 @@ const SourceCustomLabel = "custom"
 // factory in Model.Build — keeping that knowledge out of the catalog
 // and out of any caller that hands a baseURL to Build.
 const (
-	DefaultAnthropicBaseURL = "https://api.anthropic.com"
-	DefaultOpenAIBaseURL    = "https://api.openai.com"
-	DefaultFireworksBaseURL = "https://api.fireworks.ai/inference"
-	DefaultGeminiBaseURL    = "https://generativelanguage.googleapis.com"
-	DefaultXAIBaseURL       = "https://api.x.ai"
+	DefaultAnthropicBaseURL  = "https://api.anthropic.com"
+	DefaultOpenAIBaseURL     = "https://api.openai.com"
+	DefaultFireworksBaseURL  = "https://api.fireworks.ai/inference"
+	DefaultKimiCodingBaseURL = "https://api.kimi.ai/coding"
+	DefaultGeminiBaseURL     = "https://generativelanguage.googleapis.com"
+	DefaultXAIBaseURL        = "https://api.x.ai"
 )
 
 // APIType identifies the wire protocol Shelley uses to talk to a model.
@@ -91,6 +93,15 @@ type Model struct {
 	// OpenAI is the client metadata (verbosity, apply_patch, canonical URL,
 	// image support) for OpenAI-protocol models; zero for other APIs.
 	OpenAI oai.Model
+
+	// MaxTokens, ThinkingLevel, ReasoningLevels, ForceAdaptiveThinking and
+	// AllowEmptyThinkingSignature are passed through to ServiceConfig; zero
+	// values keep the service defaults.
+	MaxTokens                   int
+	ThinkingLevel               llm.ThinkingLevel
+	ReasoningLevels             []llm.ThinkingLevel
+	ForceAdaptiveThinking       bool
+	AllowEmptyThinkingSignature bool
 }
 
 // Build constructs an llm.Service for this model given a BARE base URL
@@ -101,11 +112,19 @@ func (m Model) Build(baseURL, apiKey string, httpc *http.Client) llm.Service {
 	if m.APIType == APITypeBuiltIn {
 		return predictable.NewService()
 	}
+	if baseURL == "" && m.APIType == APITypeAnthropicMessages && m.Provider != ProviderAnthropic {
+		// The Anthropic package default is Anthropic's own endpoint; other
+		// vendors speaking its protocol need theirs.
+		baseURL = m.DefaultBaseURL
+	}
 	cfg := ServiceConfig{
 		APIType: m.APIType, URL: APIEndpoint(m.APIType, baseURL), APIKey: apiKey, HTTPC: httpc,
 		Model: m.APIModelName, SupportsImages: true,
 		OpenAIModel: m.OpenAI, ProviderName: string(m.Provider),
 		ThinkingBinding: m.Provider == ProviderAnthropic,
+		MaxTokens:       m.MaxTokens, ThinkingLevel: m.ThinkingLevel, ReasoningLevels: m.ReasoningLevels,
+		ForceAdaptiveThinking:       m.ForceAdaptiveThinking,
+		AllowEmptyThinkingSignature: m.AllowEmptyThinkingSignature,
 	}
 	if m.APIType == APITypeOpenAIResponses || m.APIType == APITypeOpenAIChat {
 		cfg.SupportsImages = m.OpenAI.SupportsImages
@@ -182,6 +201,35 @@ type Config struct {
 }
 
 // --- Catalog ---------------------------------------------------------------
+
+// kimiCodingLevels are Kimi Code's adaptive effort levels (Pi's Kimi Coding
+// configuration); supportsOff adds disabled thinking.
+func kimiCodingLevels(supportsOff bool) []llm.ThinkingLevel {
+	levels := []llm.ThinkingLevel{llm.ThinkingLevelLow, llm.ThinkingLevelHigh, llm.ThinkingLevelMax}
+	if supportsOff {
+		levels = append([]llm.ThinkingLevel{llm.ThinkingLevelOff}, levels...)
+	}
+	return levels
+}
+
+// kimiCodingModel follows Pi's Kimi Coding configuration: image input, adaptive
+// thinking and unsigned thinking history, without Claude-only betas or identity.
+func kimiCodingModel(id, description, apiModelName string, maxTokens int, supportsOff bool) Model {
+	return Model{
+		ID: id, Provider: ProviderKimiCoding,
+		Description: description, APIModelName: apiModelName,
+		APIType: APITypeAnthropicMessages, DefaultBaseURL: DefaultKimiCodingBaseURL,
+		MaxTokens: maxTokens, ThinkingLevel: llm.ThinkingLevelHigh,
+		ReasoningLevels:       kimiCodingLevels(supportsOff),
+		ForceAdaptiveThinking: true, AllowEmptyThinkingSignature: true,
+	}
+}
+
+// KimiK3Coding is the Kimi Code route for the existing K3 picker ID.
+// Sources may select it instead of the catalog's Fireworks route.
+func KimiK3Coding() Model {
+	return kimiCodingModel("kimi-k3-fireworks", "Kimi K3", "k3", 131072, false)
+}
 
 // All returns all available models in Shelley.
 //
@@ -327,6 +375,7 @@ func All() []Model {
 			APIType: APITypeOpenAIResponses, DefaultBaseURL: DefaultXAIBaseURL,
 			OpenAI: oai.Grok45,
 		},
+		kimiCodingModel("kimi-for-coding", "Kimi For Coding", "kimi-for-coding", 32768, true),
 		{
 			ID: "kimi-k3-fireworks", Provider: ProviderFireworks,
 			Description: "Kimi K3 on Fireworks", APIModelName: oai.KimiK3Fireworks.ModelName,
