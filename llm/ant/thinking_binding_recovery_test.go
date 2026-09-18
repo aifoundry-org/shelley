@@ -73,6 +73,7 @@ func httpResponse(status int, body string) *http.Response {
 
 func testService(fn func(*http.Request) (*http.Response, error)) *Service {
 	return &Service{
+		Auth:                  APIKeyAuth{Key: "test-key"},
 		Model:                 Claude46Opus,
 		URL:                   "https://gateway.example/v1/messages",
 		ThinkingLevel:         llm.ThinkingLevelMedium,

@@ -41,6 +41,7 @@ func TestThinkingBindingRequest(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Service{
+				Auth:                  APIKeyAuth{Key: "test-key"},
 				Model:                 tt.model,
 				URL:                   tt.url,
 				ThinkingLevel:         tt.level,
@@ -119,6 +120,7 @@ func TestThinkingBindingProviderDiagnostics(t *testing.T) {
 		"data: {\"type\":\"message_stop\"}\n\n"
 	logs := captureLogs(t)
 	s := &Service{
+		Auth:          APIKeyAuth{Key: "test-key"},
 		Model:         Claude46Opus,
 		ThinkingLevel: llm.ThinkingLevelLow,
 		HTTPC: &http.Client{Transport: &roundTripFunc{fn: func(*http.Request) (*http.Response, error) {
