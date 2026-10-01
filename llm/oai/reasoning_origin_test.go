@@ -135,7 +135,7 @@ func TestResponsesServiceEnforcesReasoningOrigin(t *testing.T) {
 	defer server.Close()
 
 	service := &ResponsesService{
-		APIKey: "key", Model: modelForTest("gpt-5.6-sol"), ModelURL: server.URL,
+		Auth: APIKeyAuth{Key: "key"}, Model: modelForTest("gpt-5.6-sol"), ModelURL: server.URL,
 		ProviderName: "openai",
 	}
 	response, err := service.Do(t.Context(), &llm.Request{Messages: []llm.Message{{
