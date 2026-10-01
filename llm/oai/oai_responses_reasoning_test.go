@@ -176,7 +176,7 @@ func TestResponsesServiceReplaysFireworksSummaryReasoning(t *testing.T) {
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey: "test-key", Model: modelForTest("accounts/fireworks/models/glm-5p3"), ModelURL: server.URL,
+				Auth: APIKeyAuth{Key: "test-key"}, Model: modelForTest("accounts/fireworks/models/glm-5p3"), ModelURL: server.URL,
 				ProviderName: "fireworks", ReasoningReplay: tt.replay,
 			}
 			assistant := svc.toLLMResponseFromResponses(&responsesResponse{
@@ -230,7 +230,7 @@ func TestResponsesServiceDoesNotReplayOpenAIEncryptedReasoningInReasoningContent
 			defer server.Close()
 
 			svc := &ResponsesService{
-				APIKey: "test-key", Model: modelForTest("glm-5p3"), ModelURL: server.URL,
+				Auth: APIKeyAuth{Key: "test-key"}, Model: modelForTest("glm-5p3"), ModelURL: server.URL,
 				ProviderName: providerName, ReasoningReplay: "reasoning_content",
 			}
 			_, err := svc.Do(t.Context(), &llm.Request{Messages: []llm.Message{{
@@ -283,7 +283,7 @@ func TestResponsesServiceExplicitDisableStripsOpenAIReasoning(t *testing.T) {
 	defer server.Close()
 
 	svc := &ResponsesService{
-		APIKey: "test-key", Model: GPT54, ModelURL: server.URL,
+		Auth: APIKeyAuth{Key: "test-key"}, Model: GPT54, ModelURL: server.URL,
 		ProviderName: "openai", ReasoningReplay: "none",
 	}
 	_, err := svc.Do(t.Context(), &llm.Request{Messages: []llm.Message{{

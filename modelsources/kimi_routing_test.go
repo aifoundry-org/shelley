@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"shelley.exe.dev/exeenv"
 	"shelley.exe.dev/llm"
 	"shelley.exe.dev/llm/ant"
 	"shelley.exe.dev/llm/oai"
@@ -34,7 +33,7 @@ func discoveredKimiIntegration(t *testing.T) Source {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
-	result := discoverLLMIntegrations(t.Context(), client, slog.New(slog.NewTextHandler(io.Discard, nil)), exeenv.FromHostname("box.exe.xyz"))
+	result := discoverLLMIntegrations(t.Context(), client, slog.New(slog.NewTextHandler(io.Discard, nil)), testProdExeEnv(t))
 	if !result.Found || len(result.Integrations) != 1 {
 		t.Fatalf("discovery = %+v", result)
 	}

@@ -1206,7 +1206,7 @@ func TestResponsesServiceExhaustionUsesLatestRequestMetadata(t *testing.T) {
 				}, nil
 			})}
 
-			svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: "https://example.test", HTTPC: httpc, Backoff: []time.Duration{0}}
+			svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: "https://example.test", HTTPC: httpc, Backoff: []time.Duration{0}}
 			_, err := svc.Do(t.Context(), &llm.Request{
 				Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 			})
@@ -1277,7 +1277,7 @@ func TestResponsesServiceDoesNotRetryUnclassifiedJSONError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
@@ -1309,7 +1309,7 @@ func TestResponsesServiceJSONServerErrorIsManualRetryOnly(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
@@ -1336,7 +1336,7 @@ func TestResponsesServiceMarksExhaustedRetries(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
@@ -1364,7 +1364,7 @@ func TestResponsesServiceDoesNotRetryFailedStreamResponse(t *testing.T) {
 	defer server.Close()
 
 	var retries []llm.RetryEvent
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 		OnRetry:  func(event llm.RetryEvent) { retries = append(retries, event) },
@@ -1406,7 +1406,7 @@ func TestResponsesServiceRetriesTransientFailedStreamResponse(t *testing.T) {
 	defer server.Close()
 
 	var retries []llm.RetryEvent
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	resp, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 		OnRetry:  func(event llm.RetryEvent) { retries = append(retries, event) },
@@ -1447,7 +1447,7 @@ func TestResponsesServiceRetriesTopLevelTransientStreamError(t *testing.T) {
 	defer server.Close()
 
 	var retries []llm.RetryEvent
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 		OnRetry:  func(event llm.RetryEvent) { retries = append(retries, event) },
@@ -1481,7 +1481,7 @@ func TestResponsesServiceRetriesUnclassifiedStreamError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
@@ -1508,7 +1508,7 @@ func TestResponsesServiceTerminalErrorOverridesEarlierRetryMetadata(t *testing.T
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "test-api-key", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "test-api-key"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	_, err := svc.Do(t.Context(), &llm.Request{
 		Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}},
 	})
