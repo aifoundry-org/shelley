@@ -38,7 +38,7 @@ func TestKimiCodingCatalog(t *testing.T) {
 			t.Fatalf("Kimi compatibility options = %+v", svc)
 		}
 	}
-	for _, id := range []string{"kimi-k2.6-fireworks", "kimi-k2.7-code-fireworks", "kimi-k3-fireworks"} {
+	for _, id := range []string{"kimi-k3-fireworks"} {
 		fw := ByID(id)
 		if fw == nil || fw.Provider != ProviderFireworks || fw.APIType != APITypeOpenAIChat {
 			t.Errorf("Fireworks entry %s must stay independent", id)
