@@ -172,3 +172,52 @@ func TestJoinWithLocalCredsDoesNotSeize(t *testing.T) {
 		t.Errorf("a should follow b: %+v", got)
 	}
 }
+
+func TestStatus(t *testing.T) {
+	ctx := context.Background()
+	na := fleet.LoopbackNode(t, "a")
+	nb := fleet.LoopbackNode(t, "b", na.Addr())
+	a, b := newManager(t, na), newManager(t, nb)
+	creds := func(m *Manager) map[string]*CredentialStatus {
+		return m.Status()["credentials"].(map[string]*CredentialStatus)
+	}
+
+	// Nobody owns anything: every provider is present and null.
+	for _, m := range []*Manager{a, b} {
+		got := creds(m)
+		if len(got) != len(Providers) {
+			t.Fatalf("providers = %v", got)
+		}
+		for p, c := range got {
+			if c != nil {
+				t.Errorf("%s owned before login: %+v", p, c)
+			}
+		}
+	}
+
+	if err := a.Save("anthropic", tok("rt-a1")); err != nil {
+		t.Fatal(err)
+	}
+	na.Sync(ctx)
+	nb.Sync(ctx)
+	b.reconcile(ctx, "anthropic", false)
+
+	owner, follower := creds(a)["anthropic"], creds(b)["anthropic"]
+	if owner == nil || !owner.Self || owner.Owner != "a" || owner.OwnerID != na.ID() || owner.Epoch != 1 {
+		t.Errorf("owner view: %+v", owner)
+	}
+	if follower == nil || follower.Self || follower.Owner != "a" || follower.OwnerID != na.ID() || follower.Epoch != 1 {
+		t.Errorf("follower view: %+v", follower)
+	}
+	if owner.ExpiresAt.IsZero() || !owner.ExpiresAt.Equal(follower.ExpiresAt) {
+		t.Errorf("expires_at: owner %v follower %v", owner.ExpiresAt, follower.ExpiresAt)
+	}
+	if creds(b)["openai"] != nil {
+		t.Error("openai owned")
+	}
+
+	// Outside a fleet there is nothing to report.
+	if got := (&Manager{Disk: a.Disk, Logger: a.Logger}).Status()["credentials"].(map[string]*CredentialStatus); got["anthropic"] != nil {
+		t.Errorf("no-fleet status: %+v", got)
+	}
+}
