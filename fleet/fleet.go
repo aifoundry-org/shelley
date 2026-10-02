@@ -21,17 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"tailscale.com/types/key"
 )
-
-// Config is the "fleet" section of shelley.json.
-type Config struct {
-	// Name is a human-readable label for this node.
-	Name string `json:"name"`
-	// Secret is shared by every node in the fleet; it gates the transport.
-	Secret string `json:"secret"`
-}
 
 // NodeInfo is the value stored under "node/<id>".
 type NodeInfo struct {
@@ -49,7 +39,7 @@ type Peer struct {
 }
 
 type Node struct {
-	cfg    Config
+	name   string
 	store  *Store
 	tr     Transport
 	logger *slog.Logger
@@ -68,48 +58,12 @@ const (
 	fanout            = 3
 )
 
-// Start opens the fleet store at dbPath, brings up the tailcat transport and
-// starts replicating. It returns once the node is listening.
-func Start(ctx context.Context, cfg Config, dbPath string, logger *slog.Logger) (*Node, error) {
-	if cfg.Secret == "" {
-		return nil, errors.New("fleet: secret is required")
-	}
-	store, err := OpenStore(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	nk, err := loadKey(store)
-	if err != nil {
-		store.Close()
-		return nil, err
-	}
-	logf := func(format string, args ...any) { logger.Debug("tailcat: " + fmt.Sprintf(format, args...)) }
-	tr, err := newTailcatTransport(ctx, nk, cfg.Secret, logf)
-	if err != nil {
-		store.Close()
-		return nil, err
-	}
-	return start(ctx, cfg, store, tr, logger)
-}
-
-func loadKey(store *Store) (key.NodePrivate, error) {
-	var nk key.NodePrivate
-	s, err := store.Identity("nodekey")
-	if err != nil {
-		return nk, err
-	}
-	if s != "" {
-		return nk, nk.UnmarshalText([]byte(s))
-	}
-	nk = key.NewNode()
-	b, _ := nk.MarshalText()
-	return nk, store.SetIdentity("nodekey", string(b))
-}
-
-func start(ctx context.Context, cfg Config, store *Store, tr Transport, logger *slog.Logger) (*Node, error) {
+// start brings up a node on an open store and transport. The caller owns the
+// store; Close stops the node but leaves the store open.
+func start(ctx context.Context, name string, store *Store, tr Transport, logger *slog.Logger) (*Node, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	n := &Node{
-		cfg: cfg, store: store, tr: tr, logger: logger.With("component", "fleet"),
+		name: name, store: store, tr: tr, logger: logger.With("component", "fleet"),
 		cancel: cancel, done: make(chan struct{}), kick: make(chan struct{}, 1),
 		peers: map[string]*Peer{},
 	}
@@ -130,7 +84,7 @@ func start(ctx context.Context, cfg Config, store *Store, tr Transport, logger *
 	mux.HandleFunc("POST /sync", n.handleSync)
 	go http.Serve(tr.Listener(), mux)
 	go n.run(ctx)
-	n.logger.Info("fleet node started", "id", n.ID(), "name", cfg.Name, "addr", tr.Addr())
+	n.logger.Info("fleet node started", "id", n.ID(), "name", name, "addr", tr.Addr())
 	return n, nil
 }
 
@@ -140,8 +94,7 @@ func (n *Node) Addr() string { return n.tr.Addr() }
 func (n *Node) Close() error {
 	n.cancel()
 	<-n.done
-	n.tr.Close()
-	return n.store.Close()
+	return n.tr.Close()
 }
 
 // Put writes key locally and nudges the sync loop so peers see it promptly.
@@ -213,10 +166,11 @@ func (n *Node) Peers() []Peer {
 }
 
 func (n *Node) heartbeat(ctx context.Context) error {
-	return n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.cfg.Name, Addr: n.Addr(), Seen: time.Now().UTC()})
+	return n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.name, Addr: n.Addr(), Seen: time.Now().UTC()})
 }
 
-// loadRoster merges "node/*" entries into the peer set.
+// loadRoster rebuilds the peer set from the live "node/*" entries. Peers with
+// no ID yet (a Join in flight) are kept until the roster names them.
 func (n *Node) loadRoster(ctx context.Context) {
 	entries, err := n.store.List(ctx, "node/")
 	if err != nil {
@@ -225,6 +179,12 @@ func (n *Node) loadRoster(ctx context.Context) {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	peers := map[string]*Peer{}
+	for addr, p := range n.peers {
+		if p.ID == "" {
+			peers[addr] = p
+		}
+	}
 	for _, e := range entries {
 		id := strings.TrimPrefix(e.Key, "node/")
 		if id == n.ID() {
@@ -234,19 +194,15 @@ func (n *Node) loadRoster(ctx context.Context) {
 		if err := json.Unmarshal(e.Value, &info); err != nil {
 			continue
 		}
-		for addr, p := range n.peers {
-			if p.ID == id && addr != info.Addr {
-				delete(n.peers, addr) // node moved
-			}
-		}
 		p, ok := n.peers[info.Addr]
 		if !ok {
 			p = &Peer{}
-			n.peers[info.Addr] = p
 		}
 		p.ID = id
 		p.NodeInfo = info
+		peers[info.Addr] = p
 	}
+	n.peers = peers
 }
 
 func (n *Node) run(ctx context.Context) {

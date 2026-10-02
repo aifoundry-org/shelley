@@ -39,9 +39,8 @@ type GlobalConfig struct {
 }
 
 type shelleyConfig struct {
-	LLMGateway   string        `json:"llm_gateway"`
-	DefaultModel string        `json:"default_model"`
-	Fleet        *fleet.Config `json:"fleet,omitempty"`
+	LLMGateway   string `json:"llm_gateway"`
+	DefaultModel string `json:"default_model"`
 }
 
 var discoverLLMIntegrations = modelsources.DiscoverLLMIntegrations
@@ -75,7 +74,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "  models [flags]                List the models the server would expose, without starting it\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  client [flags] <subcommand>   CLI client (chat, read, list, archive) (experimental)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  skill <cat|ls|new> [name]     Read, list, or create skills\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  fleet <status|addr|join|...>  Inspect or join the p2p fleet (see shelley fleet -h)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  fleet <init|join|status|...>  Create, join or inspect the p2p fleet (see shelley fleet -h)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  dtach <new|attach> ...        Legacy persistent PTY session helper\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  tour <chunks|verify|attach|show> ...  Commit guided tours (git notes)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  exe-scroll [args]              Run the embedded exe-scroll binary\n")
@@ -224,15 +223,13 @@ func runServe(global GlobalConfig, args []string) {
 	svr.SetCredentialsPath(global.CredentialsPath)
 	svr.Banner = *banner
 
-	if cfg, _ := loadConfig(global.ConfigPath); cfg.Fleet != nil {
-		fleetNode, err := fleet.Start(context.Background(), *cfg.Fleet, strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
-		if err != nil {
-			logger.Error("Failed to start fleet node", "error", err)
-			os.Exit(1)
-		}
-		defer fleetNode.Close()
-		svr.Mount("/api/fleet", fleetNode.Handler())
+	fleetSvc, err := fleet.Open(context.Background(), strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
+	if err != nil {
+		logger.Error("Failed to open fleet", "error", err)
+		os.Exit(1)
 	}
+	defer fleetSvc.Close()
+	svr.Mount("/api/fleet", fleetSvc.Handler())
 
 	// Load notification channels from DB.
 	svr.ReloadNotificationChannels()

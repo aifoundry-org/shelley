@@ -18,11 +18,11 @@ func testNode(t *testing.T, name string, join ...string) *Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := start(context.Background(), Config{Name: name}, store, tr, slog.Default())
+	n, err := start(context.Background(), name, store, tr, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { n.Close() })
+	t.Cleanup(func() { n.Close(); store.Close() })
 	for _, addr := range join {
 		if err := n.Join(context.Background(), addr); err != nil {
 			t.Fatal(err)
@@ -126,5 +126,23 @@ func TestOpsIdempotent(t *testing.T) {
 	after, _ := s.OpsAfter(ctx, VersionVector{"x": 1})
 	if len(after) != 1 || after[0].Node != "y" {
 		t.Errorf("OpsAfter = %+v", after)
+	}
+}
+
+func TestLeaveRetractsRosterEntry(t *testing.T) {
+	ctx := context.Background()
+	a := testNode(t, "a")
+	b := testNode(t, "b", a.Addr())
+	syncAll(ctx, a, b)
+	if len(a.Peers()) != 1 {
+		t.Fatalf("a peers = %+v", a.Peers())
+	}
+	// What Service.Leave does before stopping the node.
+	if _, err := b.store.Append(ctx, b.ID(), "node/"+b.ID(), nil); err != nil {
+		t.Fatal(err)
+	}
+	b.syncRound(ctx, 1)
+	if got := a.Peers(); len(got) != 0 {
+		t.Errorf("a still has peers after b left: %+v", got)
 	}
 }

@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"net"
 	"sync"
@@ -28,18 +27,11 @@ type Transport interface {
 // fleetPort is the in-tunnel TCP port the sync HTTP server listens on.
 const fleetPort = 7
 
-// presharedKey derives the WireGuard pre-shared key every node in the fleet
-// uses from the fleet secret. Published addresses omit it, so holding an
-// address is not enough to join: the WireGuard handshake fails without the
-// secret.
-func presharedKey(secret string) tailcat.PresharedKey {
-	return tailcat.PresharedKey(sha256.Sum256([]byte("shelley-fleet-psk\x00" + secret)))
-}
-
 type tailcatTransport struct {
 	srv    *tailcat.Server
 	ln     net.Listener
-	addr   tailcat.Addr
+	addr   tailcat.Addr // without PSK: what the roster publishes
+	invite tailcat.Addr // with PSK: what joiners need
 	psk    tailcat.PresharedKey
 	nodeID string
 	key    key.NodePrivate
@@ -49,9 +41,9 @@ type tailcatTransport struct {
 	clients map[tailcat.Addr]*tailcat.Client
 }
 
-func newTailcatTransport(ctx context.Context, nk key.NodePrivate, secret string, logf logger.Logf) (*tailcatTransport, error) {
+func newTailcatTransport(ctx context.Context, nk key.NodePrivate, psk tailcat.PresharedKey, logf logger.Logf) (*tailcatTransport, error) {
 	t := &tailcatTransport{
-		psk:     presharedKey(secret),
+		psk:     psk,
 		nodeID:  nk.Public().String(),
 		key:     nk,
 		logf:    logf,
@@ -67,15 +59,29 @@ func newTailcatTransport(ctx context.Context, nk key.NodePrivate, secret string,
 		return nil, err
 	}
 	t.ln = ln
-	// Publish the address without the PSK; see presharedKey.
-	ci, err := tailcat.ParseAddr(t.srv.TailcatAddr())
+	t.invite = t.srv.TailcatAddr()
+	addr, _, err := splitInvite(string(t.invite))
 	if err != nil {
 		t.Close()
 		return nil, err
 	}
-	ci.PresharedKey = tailcat.PresharedKey{}
-	t.addr = ci.Addr()
+	t.addr = addr
 	return t, nil
+}
+
+// splitInvite separates a tailcat address carrying the fleet PSK into the
+// public address (what peers publish) and the PSK (what gates the fleet).
+func splitInvite(invite string) (tailcat.Addr, tailcat.PresharedKey, error) {
+	ci, err := tailcat.ParseAddr(tailcat.Addr(invite))
+	if err != nil {
+		return "", tailcat.PresharedKey{}, err
+	}
+	if ci.PresharedKey.IsZero() {
+		return "", tailcat.PresharedKey{}, fmt.Errorf("invite carries no pre-shared key")
+	}
+	psk := ci.PresharedKey
+	ci.PresharedKey = tailcat.PresharedKey{}
+	return ci.Addr(), psk, nil
 }
 
 func (t *tailcatTransport) ID() string             { return t.nodeID }
