@@ -23,6 +23,10 @@ type Service struct {
 	ctx    context.Context
 	path   string
 	logger *slog.Logger
+	// StatusExtra, if set, contributes fields to GET /api/fleet when joined.
+	// Consumers of the fleet (e.g. shared credentials) use it to surface
+	// their view without the fleet package knowing about them.
+	StatusExtra func() map[string]any
 
 	mu    sync.Mutex
 	store *Store
