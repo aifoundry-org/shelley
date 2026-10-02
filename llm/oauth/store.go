@@ -28,6 +28,15 @@ func DefaultCredentialsPath() string {
 	return filepath.Join(configDir, "shelley", "credentials.json")
 }
 
+// Credentials is where OAuth tokens live, keyed by provider name. Store is the
+// on-disk implementation; a fleet-aware one may serve tokens published by
+// another node.
+type Credentials interface {
+	Load(provider string) (Token, error)
+	Save(provider string, tok Token) error
+	Delete(provider string) error
+}
+
 // Store is an on-disk set of OAuth tokens keyed by provider name. The file is
 // a JSON object {provider: Token}, written with 0600 permissions.
 type Store struct {

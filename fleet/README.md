@@ -51,3 +51,20 @@ multi-node replication runs in-process without DERP.
 
 `shelley fleet init|invite|join INVITE|leave|status|ls [PREFIX]|get KEY|put KEY [JSON]|rm KEY`
 (talks to the local server over the Unix socket; `-url` to override).
+
+## Shared subscription credentials (`fleet/cred`)
+
+The node that logs in to a provider (Claude / ChatGPT / Kimi) owns that
+credential: it keeps the refresh token on disk and publishes only the
+short-lived access token as `cred/<provider>/<node-id>` = `{epoch, access_token,
+expires_at, …}`, refreshing at half TTL. Other nodes follow: they use the
+published access token and never refresh, so refresh-token rotation has a
+single actor. Highest `epoch` wins; a login anywhere claims `max+1`.
+
+- **Owner dies**: followers keep working until the published token expires.
+  To move ownership, log in on any other node — that node claims the next
+  epoch with a fresh token family. When the old owner comes back it sees the
+  higher epoch, retracts its entry and follows; its on-disk token is inert.
+- **Logout** on the owner retracts the entry; followers lose the provider.
+- `GET /api/subscriptions` reports the role per provider (`fleet` field);
+  the UI offers *Take over* on followers.

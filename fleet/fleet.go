@@ -46,6 +46,7 @@ type Node struct {
 	httpc  *http.Client
 	cancel context.CancelFunc
 	done   chan struct{}
+	ready  chan struct{} // closed after the first sync round
 	kick   chan struct{}
 
 	mu    sync.Mutex
@@ -70,7 +71,7 @@ func start(ctx context.Context, name string, store *Store, tr Transport, logger 
 	ctx, cancel := context.WithCancel(ctx)
 	n := &Node{
 		name: name, store: store, tr: tr, logger: logger.With("component", "fleet"),
-		cancel: cancel, done: make(chan struct{}), kick: make(chan struct{}, 1),
+		cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), kick: make(chan struct{}, 1),
 		peers: map[string]*Peer{},
 	}
 	n.httpc = &http.Client{
@@ -152,6 +153,10 @@ func (n *Node) Join(ctx context.Context, addr string) error {
 	n.Kick()
 	return nil
 }
+
+// Ready is closed once the first sync round has completed, i.e. this node has
+// heard the fleet's current state (or tried every peer it knows).
+func (n *Node) Ready() <-chan struct{} { return n.ready }
 
 // Kick requests an immediate sync round.
 func (n *Node) Kick() {
@@ -250,6 +255,7 @@ func (n *Node) run(ctx context.Context) {
 	hb := time.NewTicker(heartbeatInterval)
 	defer hb.Stop()
 	n.syncRound(ctx, len(n.Peers())) // first round: everyone we know
+	close(n.ready)
 	for {
 		select {
 		case <-ctx.Done():

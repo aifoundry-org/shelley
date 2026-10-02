@@ -40,7 +40,7 @@ type KimiDeviceAuth struct {
 
 // KimiDeviceFlow authorizes a Kimi Code subscription without a local callback.
 type KimiDeviceFlow struct {
-	Store *Store
+	Store Credentials
 	HTTPC *http.Client
 
 	deviceEP string
@@ -50,7 +50,7 @@ type KimiDeviceFlow struct {
 }
 
 // NewKimiDeviceFlow builds a device-code login backed by the given store.
-func NewKimiDeviceFlow(store *Store, httpc *http.Client) *KimiDeviceFlow {
+func NewKimiDeviceFlow(store Credentials, httpc *http.Client) *KimiDeviceFlow {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
@@ -272,7 +272,7 @@ func (f *KimiDeviceFlow) TryPoll(ctx context.Context, device *KimiDeviceAuth) (d
 }
 
 // NewKimiTokenSource builds a TokenSource using Kimi's refresh endpoint.
-func NewKimiTokenSource(store *Store, httpc *http.Client) *TokenSource {
+func NewKimiTokenSource(store Credentials, httpc *http.Client) *TokenSource {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
