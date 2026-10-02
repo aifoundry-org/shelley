@@ -16,6 +16,7 @@ import (
 	"shelley.exe.dev/claudetool"
 	"shelley.exe.dev/client"
 	"shelley.exe.dev/db"
+	"shelley.exe.dev/fleet"
 	"shelley.exe.dev/llm/llmhttp"
 	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/modelproviders"
@@ -40,8 +41,9 @@ type GlobalConfig struct {
 }
 
 type shelleyConfig struct {
-	LLMGateway   string `json:"llm_gateway"`
-	DefaultModel string `json:"default_model"`
+	LLMGateway   string        `json:"llm_gateway"`
+	DefaultModel string        `json:"default_model"`
+	Fleet        *fleet.Config `json:"fleet,omitempty"`
 }
 
 var discoverLLMIntegrations = modelsources.DiscoverLLMIntegrations
@@ -233,6 +235,16 @@ func runServe(global GlobalConfig, args []string) {
 	svr.SetModelProviderManager(providerManager)
 	svr.SetCredentialsPath(global.CredentialsPath)
 	svr.Banner = *banner
+
+	if cfg, _ := loadConfig(global.ConfigPath); cfg.Fleet != nil {
+		fleetNode, err := fleet.Start(context.Background(), *cfg.Fleet, strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
+		if err != nil {
+			logger.Error("Failed to start fleet node", "error", err)
+			os.Exit(1)
+		}
+		defer fleetNode.Close()
+		svr.Mount("/api/fleet", fleetNode.Handler())
+	}
 
 	// Load notification channels from DB.
 	svr.ReloadNotificationChannels()
