@@ -6,13 +6,12 @@
 // Everyone else follows: they use the published access token and never
 // refresh. Among the entries for a provider, the highest epoch wins; a login
 // anywhere claims max+1, so an operator moves ownership simply by logging in
-// on another node. The former owner notices the higher epoch and steps down.
+// on another node. The former owner notices the higher epoch and yields; its
+// own token stays on disk and is used again if the current owner goes away.
 package cred
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -103,33 +102,16 @@ func (m *Manager) Load(provider string) (oauth.Token, error) {
 	if n, best, _ := m.best(context.Background(), provider); best != nil && best.owner != n.ID() {
 		return best.token(), nil
 	}
-	tok, err := m.Disk.Load(provider)
-	if err != nil {
-		return tok, err
-	}
-	if m.Fleet != nil {
-		if sup, _ := m.Fleet.Meta(metaKey(provider, "superseded")); sup != "" && sup == hash(tok.RefreshToken) {
-			return oauth.Token{}, fmt.Errorf("%s login on this node was superseded by another fleet member and the owner has since logged out; log in again", provider)
-		}
-	}
-	return tok, nil
+	return m.Disk.Load(provider)
 }
 
 // Save persists a token (from login or refresh) and publishes it if this
 // node owns, or now claims, the credential.
 func (m *Manager) Save(provider string, tok oauth.Token) error {
-	prev, _ := m.Disk.Load(provider)
 	if err := m.Disk.Save(provider, tok); err != nil {
 		return err
 	}
-	if m.Fleet != nil {
-		// A refresh rotates the refresh token; keep tracking the family we own
-		// so reconcile sees a rotation, not a new login.
-		if rt, _ := m.Fleet.Meta(metaKey(provider, "rt")); rt != "" && rt == hash(prev.RefreshToken) {
-			m.Fleet.SetMeta(metaKey(provider, "rt"), hash(tok.RefreshToken))
-		}
-	}
-	m.reconcile(context.Background(), provider)
+	m.reconcile(context.Background(), provider, true)
 	return nil
 }
 
@@ -138,7 +120,7 @@ func (m *Manager) Delete(provider string) error {
 	if err := m.Disk.Delete(provider); err != nil {
 		return err
 	}
-	m.reconcile(context.Background(), provider)
+	m.reconcile(context.Background(), provider, false)
 	return nil
 }
 
@@ -177,7 +159,7 @@ func (m *Manager) Run(ctx context.Context) {
 			select {
 			case <-n.Ready(): // don't claim before hearing the fleet's state
 				for _, p := range Providers {
-					m.reconcile(ctx, p)
+					m.reconcile(ctx, p, false)
 					m.refreshIfDue(ctx, p)
 				}
 			case <-ctx.Done():
@@ -208,8 +190,17 @@ func (m *Manager) refreshIfDue(ctx context.Context, provider string) {
 }
 
 // reconcile brings this node's published entry in line with its disk state
-// and the fleet's view of ownership.
-func (m *Manager) reconcile(ctx context.Context, provider string) {
+// and the fleet's view of ownership. claim is true when a login just
+// happened here, which is the one act that takes ownership from a live
+// owner. Rules, in order:
+//
+//   - no usable local token: retract anything we published.
+//   - another node owns and this is not a login: yield (retract, follow).
+//     The local token stays on disk and is used again if that owner goes
+//     away or logs out.
+//   - otherwise publish: a claim takes maxSeenEpoch+1; a refresh keeps the
+//     epoch and just updates the access token.
+func (m *Manager) reconcile(ctx context.Context, provider string, claim bool) {
 	n, best, mine := m.best(ctx, provider)
 	if n == nil {
 		return
@@ -218,49 +209,39 @@ func (m *Manager) reconcile(ctx context.Context, provider string) {
 	key := "cred/" + provider + "/" + me
 	local, err := m.Disk.Load(provider)
 	if err != nil || local.RefreshToken == "" {
-		if mine != nil { // logged out
+		if mine != nil {
 			n.Delete(ctx, key)
-			m.setMeta(provider, "rt", "")
 			m.Logger.Info("fleet cred retracted", "provider", provider)
 		}
 		return
 	}
-	h := hash(local.RefreshToken)
-	rt, _ := m.Fleet.Meta(metaKey(provider, "rt"))
-	superseded, _ := m.Fleet.Meta(metaKey(provider, "superseded"))
-	publish := func(epoch int) {
-		e := entry{Epoch: epoch, AccessToken: local.AccessToken, ExpiresAt: local.ExpiresAt, AccountID: local.AccountID, Published: time.Now().UTC()}
-		if err := n.Put(ctx, key, e); err != nil {
-			m.Logger.Error("fleet cred publish", "provider", provider, "error", err)
-		}
+	maxSeen := m.metaInt(provider, "maxepoch")
+	if best != nil && best.Epoch > maxSeen {
+		maxSeen = best.Epoch
+		m.setMeta(provider, "maxepoch", fmt.Sprint(maxSeen))
 	}
-	switch h {
-	case superseded:
-		// Our login was superseded by a newer one elsewhere; we follow.
-	case rt:
-		var epoch int
-		if v, _ := m.Fleet.Meta(metaKey(provider, "epoch")); v != "" {
-			fmt.Sscan(v, &epoch)
-		}
-		if best != nil && best.owner != me && best.Epoch > epoch {
+	if best != nil && best.owner != me && !claim {
+		if mine != nil {
 			n.Delete(ctx, key)
-			m.setMeta(provider, "rt", "")
-			m.setMeta(provider, "superseded", h)
-			m.Logger.Info("fleet cred superseded, now following", "provider", provider, "owner", best.owner, "epoch", best.Epoch)
+			m.Logger.Info("fleet cred yielded, now following", "provider", provider, "owner", best.owner, "epoch", best.Epoch)
+		}
+		return
+	}
+	epoch := maxSeen + 1
+	owned := mine != nil && (best == nil || best.owner == me)
+	if owned {
+		if mine.AccessToken == local.AccessToken {
 			return
 		}
-		if mine == nil || mine.AccessToken != local.AccessToken {
-			publish(epoch)
-		}
-	default: // a new login on this node: claim ownership
-		epoch := 1
-		if best != nil {
-			epoch = best.Epoch + 1
-		}
-		publish(epoch)
-		m.setMeta(provider, "rt", h)
-		m.setMeta(provider, "epoch", fmt.Sprint(epoch))
-		m.setMeta(provider, "superseded", "")
+		epoch = mine.Epoch
+	}
+	e := entry{Epoch: epoch, AccessToken: local.AccessToken, ExpiresAt: local.ExpiresAt, AccountID: local.AccountID, Published: time.Now().UTC()}
+	if err := n.Put(ctx, key, e); err != nil {
+		m.Logger.Error("fleet cred publish", "provider", provider, "error", err)
+		return
+	}
+	if !owned {
+		m.setMeta(provider, "maxepoch", fmt.Sprint(epoch))
 		m.Logger.Info("fleet cred claimed", "provider", provider, "epoch", epoch)
 	}
 }
@@ -322,12 +303,12 @@ func (m *Manager) setMeta(provider, k, v string) {
 	}
 }
 
-func metaKey(provider, k string) string { return "cred/" + provider + "/" + k }
-
-func hash(s string) string {
-	if s == "" {
-		return ""
+func (m *Manager) metaInt(provider, k string) int {
+	var v int
+	if s, _ := m.Fleet.Meta(metaKey(provider, k)); s != "" {
+		fmt.Sscan(s, &v)
 	}
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+	return v
 }
+
+func metaKey(provider, k string) string { return "cred/" + provider + "/" + k }
