@@ -159,7 +159,7 @@ func TestKimiDeviceFlow(t *testing.T) {
 	if err != nil || preserved.AccessToken != other.AccessToken {
 		t.Fatalf("other credentials lost: %v", err)
 	}
-	info, err := os.Stat(flow.Store.Path)
+	info, err := os.Stat(flow.Store.(*Store).Path)
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("credential file mode: %v, %v", info, err)
 	}
@@ -481,7 +481,7 @@ func TestKimiPersistenceFailures(t *testing.T) {
 			flow := kimiTestFlow(t, nil)
 			flow.HTTPC.Transport = kimiTransport(func(*http.Request) (*http.Response, error) {
 				// Make persistence fail after a successful token exchange.
-				flow.Store.Path = t.TempDir()
+				flow.Store.(*Store).Path = t.TempDir()
 				return kimiResponse(200, kimiTokenJSON), nil
 			})
 			var err error
@@ -618,7 +618,7 @@ func TestKimiTryPollExpiryCancelAndFailure(t *testing.T) {
 			case "denied":
 				wantRequests = 1
 			case "persistence":
-				flow.Store.Path = t.TempDir()
+				flow.Store.(*Store).Path = t.TempDir()
 				wantRequests = 1
 			}
 			for range 2 {

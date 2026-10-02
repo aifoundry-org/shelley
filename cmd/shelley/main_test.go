@@ -83,7 +83,7 @@ func TestBuildLLMConfigSkipsGatewayWhenReflectionFoundLLMIntegration(t *testing.
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, logger, nil)
+	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, logger, nil, credentials(GlobalConfig{ConfigPath: configPath}, logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestBuildLLMConfigDoesNotOverrideMetadataEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(GlobalConfig{ConfigPath: configPath}, slog.Default()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestBuildLLMConfigDefaultModelPrecedence(t *testing.T) {
 	}
 
 	// Flag unset (the VM case): shelley.json's default_model wins.
-	cfg, err := buildLLMConfig(parseGlobal(t, "serve"), logger, nil)
+	cfg, err := buildLLMConfig(parseGlobal(t, "serve"), logger, nil, credentials(parseGlobal(t, "serve"), logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestBuildLLMConfigDefaultModelPrecedence(t *testing.T) {
 	}
 
 	// Flag explicitly set: it overrides shelley.json.
-	cfg, err = buildLLMConfig(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger, nil)
+	cfg, err = buildLLMConfig(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger, nil, credentials(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestBuildLLMConfigIgnoresInvalidLegacyExeEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	_, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(GlobalConfig{ConfigPath: configPath}, slog.Default()))
 	if err != nil {
 		t.Fatalf("legacy exe_environment should be ignored: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger, credentials(GlobalConfig{CredentialsPath: credPath}, logger))
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	// Anthropic models must resolve to the subscription source (highest priority).
@@ -359,7 +359,7 @@ func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
 
 	credPath := filepath.Join(t.TempDir(), "credentials.json") // no file written
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger)
+	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger, credentials(GlobalConfig{CredentialsPath: credPath}, logger))
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT/Kimi subscription" {
@@ -571,13 +571,13 @@ func TestSubscriptionSourceKimi(t *testing.T) {
 	store := &oauth.Store{Path: credPath}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	global := GlobalConfig{CredentialsPath: credPath}
-	if _, ok := subscriptionSource(global, logger); ok {
+	if _, ok := subscriptionSource(credentials(global, logger), logger); ok {
 		t.Fatal("subscription source exists before login")
 	}
 	if err := store.Save("kimi", oauth.Token{AccessToken: "kimi-test", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	source, ok := subscriptionSource(global, logger)
+	source, ok := subscriptionSource(credentials(global, logger), logger)
 	if !ok {
 		t.Fatal("Kimi credentials did not enable subscription source")
 	}
@@ -596,7 +596,7 @@ func TestSubscriptionSourceKimi(t *testing.T) {
 	if err := store.Delete("kimi"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := subscriptionSource(global, logger); ok {
+	if _, ok := subscriptionSource(credentials(global, logger), logger); ok {
 		t.Fatal("subscription source still exists after logout")
 	}
 }

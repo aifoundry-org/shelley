@@ -3007,7 +3007,14 @@ type builtModelRefresher interface {
 	RefreshBuiltModels([]models.Built) error
 }
 
-// handleModelRefresh refreshes the non-custom model catalog and returns the
+// RefreshModels rebuilds the non-custom model catalog, e.g. after credentials
+// changed.
+func (s *Server) RefreshModels(ctx context.Context) error {
+	_, err := s.refreshModels(ctx)
+	return err
+}
+
+// refreshModels refreshes the non-custom model catalog and returns the
 // same shape as GET /api/models.
 func (s *Server) refreshModels(ctx context.Context) ([]ModelInfo, error) {
 	if s.refreshBuiltModels == nil {
@@ -4417,6 +4424,9 @@ type subscriptionProviderStatus struct {
 	LoggedIn  bool   `json:"logged_in"`
 	Status    string `json:"status"`
 	ExpiresAt string `json:"expires_at,omitempty"`
+	// Fleet is this node's role for a fleet-shared credential, e.g.
+	// "owner (epoch 2)" or "following alpha (...)"; empty outside a fleet.
+	Fleet string `json:"fleet,omitempty"`
 }
 
 type subscriptionsResponse struct {
@@ -4433,12 +4443,18 @@ type subscriptionLoginSession struct {
 	Claude     *oauth.AnthropicLoginFlow
 }
 
-func (s *Server) subscriptionStore() *oauth.Store {
-	path := s.credentialsPath
-	if path == "" {
-		path = oauth.DefaultCredentialsPath()
+func (s *Server) subscriptionStore() oauth.Credentials {
+	if s.credentials != nil {
+		return s.credentials
 	}
-	return &oauth.Store{Path: path}
+	return &oauth.Store{Path: s.subscriptionStorePath()}
+}
+
+func (s *Server) subscriptionStorePath() string {
+	if s.credentialsPath != "" {
+		return s.credentialsPath
+	}
+	return oauth.DefaultCredentialsPath()
 }
 
 func validSubscriptionProvider(provider string) bool {
@@ -4449,14 +4465,18 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	store := s.subscriptionStore()
 	now := time.Now()
 	resp := subscriptionsResponse{
-		CredentialsPath: store.Path,
+		CredentialsPath: s.subscriptionStorePath(),
 		Providers:       map[string]subscriptionProviderStatus{},
 	}
+	describer, _ := store.(interface{ Describe(provider string) string })
 	for _, provider := range []string{"anthropic", "openai", "kimi"} {
 		st := subscriptionProviderStatus{Status: oauth.Status(store, provider, now)}
 		if tok, err := store.Load(provider); err == nil {
 			st.LoggedIn = true
 			st.ExpiresAt = tok.ExpiresAt.Format(time.RFC3339)
+		}
+		if describer != nil {
+			st.Fleet = describer.Describe(provider)
 		}
 		resp.Providers[provider] = st
 	}

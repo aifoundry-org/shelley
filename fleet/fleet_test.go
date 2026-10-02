@@ -3,33 +3,13 @@ package fleet
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func testNode(t *testing.T, name string, join ...string) *Node {
-	t.Helper()
-	store, err := OpenStore(filepath.Join(t.TempDir(), "fleet.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr, err := newLoopbackTransport(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := start(context.Background(), name, store, tr, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { n.Close(); store.Close() })
-	for _, addr := range join {
-		if err := n.Join(context.Background(), addr); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return n
+	return LoopbackNode(t, name, join...)
 }
 
 func get(t *testing.T, n *Node, key string) (string, bool) {

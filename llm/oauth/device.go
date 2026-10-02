@@ -33,7 +33,7 @@ type DeviceAuth struct {
 // OpenAIDeviceFlow drives the Codex device-code login: request a user code,
 // poll until the user approves, then exchange for tokens and persist them.
 type OpenAIDeviceFlow struct {
-	Store *Store
+	Store Credentials
 	HTTPC *http.Client
 
 	apiBaseURL string                          // overridable for tests
@@ -43,7 +43,7 @@ type OpenAIDeviceFlow struct {
 }
 
 // NewOpenAIDeviceFlow builds a device-code login flow backed by the given store.
-func NewOpenAIDeviceFlow(store *Store, httpc *http.Client) *OpenAIDeviceFlow {
+func NewOpenAIDeviceFlow(store Credentials, httpc *http.Client) *OpenAIDeviceFlow {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}

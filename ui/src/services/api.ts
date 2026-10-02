@@ -45,6 +45,8 @@ export interface SubscriptionProviderStatus {
   logged_in: boolean;
   status: string;
   expires_at?: string;
+  /** Fleet role for a shared credential: "owner (epoch N)" or "following <node> (...)". */
+  fleet?: string;
 }
 
 export interface SubscriptionsStatus {

@@ -16,6 +16,7 @@ import (
 	"shelley.exe.dev/client"
 	"shelley.exe.dev/db"
 	"shelley.exe.dev/fleet"
+	"shelley.exe.dev/fleet/cred"
 	"shelley.exe.dev/llm/llmhttp"
 	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
@@ -201,8 +202,17 @@ func runServe(global GlobalConfig, args []string) {
 	// Set the database path for system prompt generation
 	server.DBPath = global.DBPath
 
+	fleetSvc, err := fleet.Open(context.Background(), strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
+	if err != nil {
+		logger.Error("Failed to open fleet", "error", err)
+		os.Exit(1)
+	}
+	defer fleetSvc.Close()
+	creds := credentials(global, logger)
+	creds.Fleet = fleetSvc
+
 	// Build LLM configuration
-	llmConfig, err := buildLLMConfig(global, logger, database)
+	llmConfig, err := buildLLMConfig(global, logger, database, creds)
 	if err != nil {
 		logger.Error("Failed to load config", "path", global.ConfigPath, "error", err)
 		os.Exit(1)
@@ -220,16 +230,15 @@ func runServe(global GlobalConfig, args []string) {
 	// Create server
 	svr := server.NewServer(database, llmManager, toolSetConfig, logger, global.PredictableOnly, llmConfig.DefaultModel, *requireHeader)
 	svr.SetModelRefresher(llmConfig.RefreshBuiltModels)
-	svr.SetCredentialsPath(global.CredentialsPath)
+	svr.SetCredentials(creds, creds.Disk.Path)
 	svr.Banner = *banner
-
-	fleetSvc, err := fleet.Open(context.Background(), strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
-	if err != nil {
-		logger.Error("Failed to open fleet", "error", err)
-		os.Exit(1)
-	}
-	defer fleetSvc.Close()
 	svr.Mount("/api/fleet", fleetSvc.Handler())
+	creds.OnChange = func() {
+		if err := svr.RefreshModels(context.Background()); err != nil {
+			logger.Error("Model refresh after fleet credential change", "error", err)
+		}
+	}
+	go creds.Run(context.Background())
 
 	// Load notification channels from DB.
 	svr.ReloadNotificationChannels()
@@ -460,12 +469,12 @@ func setupToolSetConfig(llmProvider claudetool.LLMServiceProvider, llmManager se
 //  4. Predictable (always available).
 //
 // Custom DB-backed models load on top of the returned set.
-func buildLLMConfig(global GlobalConfig, logger *slog.Logger, database *db.DB) (*server.LLMConfig, error) {
+func buildLLMConfig(global GlobalConfig, logger *slog.Logger, database *db.DB, creds *cred.Manager) (*server.LLMConfig, error) {
 	config, err := loadConfig(global.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	defaultModel, sources := buildLLMModelSources(context.Background(), global, config, logger)
+	defaultModel, sources := buildLLMModelSources(context.Background(), global, config, logger, creds)
 
 	httpc := llmhttp.NewClient(nil)
 	return &server.LLMConfig{
@@ -475,7 +484,7 @@ func buildLLMConfig(global GlobalConfig, logger *slog.Logger, database *db.DB) (
 		DB:                  database,
 		HTTPC:               httpc,
 		RefreshBuiltModels: func(ctx context.Context) ([]models.Built, error) {
-			_, sources := buildLLMModelSources(ctx, global, config, logger)
+			_, sources := buildLLMModelSources(ctx, global, config, logger, creds)
 			return modelsources.Build(models.All(), sources, httpc, logger), nil
 		},
 		Logger: logger,
@@ -500,7 +509,7 @@ func loadConfig(path string) (shelleyConfig, error) {
 	return config, nil
 }
 
-func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shelleyConfig, logger *slog.Logger) (string, []modelsources.Source) {
+func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shelleyConfig, logger *slog.Logger, creds *cred.Manager) (string, []modelsources.Source) {
 	defaultModel := global.DefaultModel
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 	openAIKey := os.Getenv("OPENAI_API_KEY")
@@ -515,7 +524,7 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shell
 	// 0. Subscription (OAuth). Highest priority: if the user has logged
 	// in with `shelley login`, provider models are served from their
 	// subscription rather than via API keys/gateway.
-	if src, ok := subscriptionSource(global, logger); ok {
+	if src, ok := subscriptionSource(creds, logger); ok {
 		sources = append(sources, src)
 	}
 
@@ -588,33 +597,32 @@ func modelsCommandDefaultID(configured string, modelList []models.Built, predict
 	return ""
 }
 
-// subscriptionSource returns a Subscription model source if the user has stored
-// OAuth credentials for any subscription provider, else ok=false.
-func subscriptionSource(global GlobalConfig, logger *slog.Logger) (modelsources.Source, bool) {
-	credPath := global.CredentialsPath
-	if credPath == "" {
-		credPath = oauth.DefaultCredentialsPath()
+// credentials returns the OAuth credential manager over the on-disk store.
+// The caller attaches a fleet to share credentials across nodes.
+func credentials(global GlobalConfig, logger *slog.Logger) *cred.Manager {
+	path := global.CredentialsPath
+	if path == "" {
+		path = oauth.DefaultCredentialsPath()
 	}
-	store := &oauth.Store{Path: credPath}
-	httpc := llmhttp.NewClient(nil)
+	return &cred.Manager{Disk: &oauth.Store{Path: path}, HTTPC: llmhttp.NewClient(nil), Logger: logger}
+}
 
-	var anthropicTS, openAITS, kimiTS *oauth.TokenSource
-	if _, err := store.Load("anthropic"); err == nil {
-		anthropicTS = oauth.NewAnthropicTokenSource(store, httpc)
-		logger.Info("Using Claude subscription credentials", "path", credPath)
+// subscriptionSource returns a Subscription model source if credentials are
+// available for any subscription provider (locally or via the fleet), else
+// ok=false.
+func subscriptionSource(creds *cred.Manager, logger *slog.Logger) (modelsources.Source, bool) {
+	ts := map[string]*oauth.TokenSource{}
+	for _, p := range cred.Providers {
+		if _, err := creds.Load(p); err != nil {
+			continue
+		}
+		ts[p] = creds.TokenSource(p)
+		logger.Info("Using subscription credentials", "provider", p, "fleet", creds.Describe(p))
 	}
-	if _, err := store.Load("openai"); err == nil {
-		openAITS = oauth.NewOpenAITokenSource(store, httpc)
-		logger.Info("Using ChatGPT subscription credentials", "path", credPath)
-	}
-	if _, err := store.Load("kimi"); err == nil {
-		kimiTS = oauth.NewKimiTokenSource(store, httpc)
-		logger.Info("Using Kimi Code subscription credentials", "path", credPath)
-	}
-	if anthropicTS == nil && openAITS == nil && kimiTS == nil {
+	if len(ts) == 0 {
 		return modelsources.Source{}, false
 	}
-	return modelsources.Subscription(anthropicTS, openAITS, kimiTS), true
+	return modelsources.Subscription(ts["anthropic"], ts["openai"], ts["kimi"]), true
 }
 
 // runModels prints the materialized list of built-in models the server
@@ -635,7 +643,7 @@ func runModels(global GlobalConfig, args []string) {
 	}
 
 	logger := setupLogging(global.Debug)
-	llmCfg, err := buildLLMConfig(global, logger, nil)
+	llmCfg, err := buildLLMConfig(global, logger, nil, credentials(global, logger))
 	if err != nil {
 		logger.Error("Failed to load config", "path", global.ConfigPath, "error", err)
 		os.Exit(1)

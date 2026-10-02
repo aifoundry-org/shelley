@@ -27,6 +27,7 @@ import (
 	"shelley.exe.dev/db"
 	"shelley.exe.dev/db/generated"
 	"shelley.exe.dev/llm"
+	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/server/diskspace"
 	"shelley.exe.dev/server/notifications"
@@ -367,6 +368,7 @@ type Server struct {
 	requireHeader            string
 	mounts                   map[string]http.Handler // extra handlers by path prefix, see Mount
 	refreshBuiltModels       func(context.Context) ([]models.Built, error)
+	credentials              oauth.Credentials // subscription OAuth tokens; nil → on-disk store at credentialsPath
 	credentialsPath          string
 	subscriptionSessions     map[string]subscriptionLoginSession
 	subscriptionSessionsMu   sync.Mutex
@@ -507,8 +509,10 @@ func (s *Server) SetModelRefresher(refresh func(context.Context) ([]models.Built
 	s.refreshBuiltModels = refresh
 }
 
-// SetCredentialsPath configures the OAuth credential store used by subscription login APIs.
-func (s *Server) SetCredentialsPath(path string) {
+// SetCredentials configures the OAuth credential store used by subscription
+// login APIs; path is the on-disk location shown to the user.
+func (s *Server) SetCredentials(creds oauth.Credentials, path string) {
+	s.credentials = creds
 	s.credentialsPath = path
 }
 
