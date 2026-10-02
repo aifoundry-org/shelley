@@ -144,6 +144,33 @@ func (m *Manager) nodeName(n *fleet.Node, id string) string {
 	return id
 }
 
+// CredentialStatus is the fleet-wide view of one provider's credential.
+type CredentialStatus struct {
+	Owner     string    `json:"owner"`    // owner node name
+	OwnerID   string    `json:"owner_id"` // owner node id
+	Epoch     int       `json:"epoch"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Self      bool      `json:"self"` // this node is the owner
+}
+
+// Status returns the fields this manager contributes to GET /api/fleet:
+// "credentials", a map from provider to its owner, or null if unowned.
+func (m *Manager) Status() map[string]any {
+	creds := map[string]*CredentialStatus{}
+	for _, p := range Providers {
+		n, best, _ := m.best(context.Background(), p)
+		if n == nil || best == nil {
+			creds[p] = nil
+			continue
+		}
+		creds[p] = &CredentialStatus{
+			Owner: m.nodeName(n, best.owner), OwnerID: best.owner,
+			Epoch: best.Epoch, ExpiresAt: best.ExpiresAt, Self: best.owner == n.ID(),
+		}
+	}
+	return map[string]any{"credentials": creds}
+}
+
 // Describe reports this node's role for provider, or "" outside a fleet.
 func (m *Manager) Describe(provider string) string {
 	n, best, _ := m.best(context.Background(), provider)

@@ -210,6 +210,7 @@ func runServe(global GlobalConfig, args []string) {
 	defer fleetSvc.Close()
 	creds := credentials(global, logger)
 	creds.Fleet = fleetSvc
+	fleetSvc.StatusExtra = creds.Status
 
 	// Build LLM configuration
 	llmConfig, err := buildLLMConfig(global, logger, database, creds)
