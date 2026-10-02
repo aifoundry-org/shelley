@@ -55,7 +55,10 @@ type Node struct {
 const (
 	syncInterval      = 10 * time.Second
 	heartbeatInterval = 2 * time.Minute
-	// staleAfter is how long a node may go without heartbeating before the
+	// seenRefresh bounds how often a heartbeat rewrites our roster entry just
+	// to bump Seen; keeps the op log from growing every tick.
+	seenRefresh = 30 * time.Minute
+	// staleAfter is how long a node may go without refreshing Seen before the
 	// rest of the fleet drops it from the roster.
 	staleAfter = 24 * time.Hour
 	fanout     = 3
@@ -171,8 +174,19 @@ func (n *Node) Peers() []Peer {
 // heartbeat refreshes our roster entry and retracts entries of nodes that have
 // not heartbeated for staleAfter (crashed, or left without saying so).
 func (n *Node) heartbeat(ctx context.Context) error {
-	if err := n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.name, Addr: n.Addr(), Seen: time.Now().UTC()}); err != nil {
+	self := "node/" + n.ID()
+	e, ok, err := n.store.Get(ctx, self)
+	if err != nil {
 		return err
+	}
+	var cur NodeInfo
+	if ok {
+		json.Unmarshal(e.Value, &cur)
+	}
+	if !ok || cur.Name != n.name || cur.Addr != n.Addr() || time.Since(cur.Seen) > seenRefresh {
+		if err := n.Put(ctx, self, NodeInfo{Name: n.name, Addr: n.Addr(), Seen: time.Now().UTC()}); err != nil {
+			return err
+		}
 	}
 	entries, err := n.store.List(ctx, "node/")
 	if err != nil {
