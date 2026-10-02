@@ -365,6 +365,7 @@ type Server struct {
 	predictableOnly          bool
 	defaultModel             string
 	requireHeader            string
+	mounts                   map[string]http.Handler // extra handlers by path prefix, see Mount
 	refreshBuiltModels       func(context.Context) ([]models.Built, error)
 	credentialsPath          string
 	subscriptionSessions     map[string]subscriptionLoginSession
@@ -517,8 +518,21 @@ func (s *Server) RegisterNotificationChannel(ch notifications.Channel) {
 	s.logger.Info("registered notification channel", "channel", ch.Name())
 }
 
+// Mount serves h at prefix and prefix+"/..." on the main listener. Call before
+// StartWithListeners.
+func (s *Server) Mount(prefix string, h http.Handler) {
+	if s.mounts == nil {
+		s.mounts = map[string]http.Handler{}
+	}
+	s.mounts[prefix] = h
+}
+
 // RegisterRoutes registers HTTP routes on the given mux
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+	for prefix, h := range s.mounts {
+		mux.Handle(prefix, h)
+		mux.Handle(prefix+"/", h)
+	}
 	// API routes - wrap with compression where beneficial
 	mux.Handle("/api/conversations", compressionHandler(http.HandlerFunc(s.handleConversations)))
 	mux.Handle("GET /api/conversations/snapshot", compressionHandler(http.HandlerFunc(s.handleConversationsSnapshot)))

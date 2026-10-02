@@ -1,0 +1,140 @@
+package fleet
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"net"
+	"sync"
+
+	"github.com/tailscale/tailcat"
+	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
+)
+
+// Transport moves bytes between fleet nodes. Each node listens once and dials
+// peers by the address they publish in the roster. The tailcat implementation
+// is used in production; loopbackTransport runs multi-node tests in-process.
+type Transport interface {
+	// ID is this node's identity, as peers will see it.
+	ID() string
+	// Addr is the dialable address this node publishes to the roster.
+	Addr() string
+	Listener() net.Listener
+	Dial(ctx context.Context, addr string) (net.Conn, error)
+	Close() error
+}
+
+// fleetPort is the in-tunnel TCP port the sync HTTP server listens on.
+const fleetPort = 7
+
+// presharedKey derives the WireGuard pre-shared key every node in the fleet
+// uses from the fleet secret. Published addresses omit it, so holding an
+// address is not enough to join: the WireGuard handshake fails without the
+// secret.
+func presharedKey(secret string) tailcat.PresharedKey {
+	return tailcat.PresharedKey(sha256.Sum256([]byte("shelley-fleet-psk\x00" + secret)))
+}
+
+type tailcatTransport struct {
+	srv    *tailcat.Server
+	ln     net.Listener
+	addr   tailcat.Addr
+	psk    tailcat.PresharedKey
+	nodeID string
+	key    key.NodePrivate
+	logf   logger.Logf
+
+	mu      sync.Mutex
+	clients map[tailcat.Addr]*tailcat.Client
+}
+
+func newTailcatTransport(ctx context.Context, nk key.NodePrivate, secret string, logf logger.Logf) (*tailcatTransport, error) {
+	t := &tailcatTransport{
+		psk:     presharedKey(secret),
+		nodeID:  nk.Public().String(),
+		key:     nk,
+		logf:    logf,
+		clients: map[tailcat.Addr]*tailcat.Client{},
+	}
+	t.srv = &tailcat.Server{Key: nk, PresharedKey: t.psk, Logf: logf}
+	if err := t.srv.Start(); err != nil {
+		return nil, fmt.Errorf("tailcat start: %w", err)
+	}
+	ln, err := t.srv.Listen(ctx, "tcp", fmt.Sprintf(":%d", fleetPort))
+	if err != nil {
+		t.srv.Close()
+		return nil, err
+	}
+	t.ln = ln
+	// Publish the address without the PSK; see presharedKey.
+	ci, err := tailcat.ParseAddr(t.srv.TailcatAddr())
+	if err != nil {
+		t.Close()
+		return nil, err
+	}
+	ci.PresharedKey = tailcat.PresharedKey{}
+	t.addr = ci.Addr()
+	return t, nil
+}
+
+func (t *tailcatTransport) ID() string             { return t.nodeID }
+func (t *tailcatTransport) Addr() string           { return string(t.addr) }
+func (t *tailcatTransport) Listener() net.Listener { return t.ln }
+
+func (t *tailcatTransport) client(addr tailcat.Addr) (*tailcat.Client, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if c, ok := t.clients[addr]; ok {
+		return c, nil
+	}
+	ci, err := tailcat.ParseAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+	ci.PresharedKey = t.psk
+	c := &tailcat.Client{Server: ci.Addr(), Key: t.key, Logf: t.logf}
+	t.clients[addr] = c
+	return c, nil
+}
+
+func (t *tailcatTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
+	c, err := t.client(tailcat.Addr(addr))
+	if err != nil {
+		return nil, err
+	}
+	return c.DialTCPPort(ctx, fleetPort)
+}
+
+func (t *tailcatTransport) Close() error {
+	t.mu.Lock()
+	for _, c := range t.clients {
+		c.Close()
+	}
+	t.mu.Unlock()
+	t.ln.Close()
+	return t.srv.Close()
+}
+
+// loopbackTransport is a plain-TCP transport on localhost for tests.
+type loopbackTransport struct {
+	id string
+	ln net.Listener
+}
+
+func newLoopbackTransport(id string) (*loopbackTransport, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	return &loopbackTransport{id: id, ln: ln}, nil
+}
+
+func (t *loopbackTransport) ID() string             { return t.id }
+func (t *loopbackTransport) Addr() string           { return t.ln.Addr().String() }
+func (t *loopbackTransport) Listener() net.Listener { return t.ln }
+func (t *loopbackTransport) Close() error           { return t.ln.Close() }
+func (t *loopbackTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", addr)
+}
