@@ -187,3 +187,30 @@ func TestStaleNodeDropped(t *testing.T) {
 		t.Error("a: returning node not restored")
 	}
 }
+
+func TestHeartbeatWritesOnlyWhenNeeded(t *testing.T) {
+	ctx := context.Background()
+	a := testNode(t, "a") // start already heartbeated once
+	seq := func() int64 { vv, _ := a.store.Version(ctx); return vv[a.ID()] }
+	before := seq()
+	for range 3 {
+		if err := a.heartbeat(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := seq(); got != before {
+		t.Errorf("heartbeat wrote %d ops with nothing changed", got-before)
+	}
+	// Seen older than seenRefresh → rewrite.
+	old, _ := json.Marshal(NodeInfo{Name: "a", Addr: a.Addr(), Seen: time.Now().Add(-seenRefresh - time.Minute)})
+	if _, err := a.store.Append(ctx, a.ID(), "node/"+a.ID(), old); err != nil {
+		t.Fatal(err)
+	}
+	before = seq()
+	if err := a.heartbeat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := seq(); got != before+1 {
+		t.Errorf("expected one refresh op, got %d", got-before)
+	}
+}

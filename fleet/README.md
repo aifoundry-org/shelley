@@ -14,8 +14,9 @@ Leaderless, quorum-free shared state across a fleet of shelleys.
 - **Replication**: each node appends to its own op log only. Peers exchange
   version vectors and copy missing ops (pull, then push). State is the
   last-writer-wins fold (hybrid logical clock, node id tiebreak).
-- **Discovery**: each node writes `node/<id>` = `{name, addr, seen}` every
-  2 minutes and retracts it on leave. Joining any one member pulls the whole
+- **Discovery**: each node writes `node/<id>` = `{name, addr, seen}`,
+  refreshing `seen` every 30 minutes (sooner if name/addr change), and
+  retracts it on leave. Joining any one member pulls the whole
   roster. A node not seen for 24h is dropped: peers stop dialing it and the
   first heartbeat to notice tombstones its entry. If it returns, its fresher
   heartbeat wins the entry back.
