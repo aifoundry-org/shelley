@@ -1,0 +1,370 @@
+// Package fleet replicates a small key/value state across every shelley in a
+// fleet, peer to peer, with no leader and no quorum.
+//
+// Each node appends to its own log only; peers exchange version vectors and
+// copy the ops they lack (anti-entropy). State is the last-writer-wins fold of
+// all logs. Nodes learn about each other through the state itself: every node
+// writes "node/<id>" with its address, so one seed address is enough to find
+// the whole fleet.
+package fleet
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"tailscale.com/types/key"
+)
+
+// Config is the "fleet" section of shelley.json.
+type Config struct {
+	// Name is a human-readable label for this node.
+	Name string `json:"name"`
+	// Secret is shared by every node in the fleet; it gates the transport.
+	Secret string `json:"secret"`
+	// Seeds are tailcat addresses of nodes to contact first.
+	Seeds []string `json:"seeds"`
+}
+
+// NodeInfo is the value stored under "node/<id>".
+type NodeInfo struct {
+	Name string    `json:"name"`
+	Addr string    `json:"addr"`
+	Seen time.Time `json:"seen"`
+}
+
+// Peer is a fleet member as seen by this node.
+type Peer struct {
+	ID string `json:"id"`
+	NodeInfo
+	LastSync time.Time `json:"last_sync,omitempty"`
+	Error    string    `json:"error,omitempty"`
+}
+
+type Node struct {
+	cfg    Config
+	store  *Store
+	tr     Transport
+	logger *slog.Logger
+	httpc  *http.Client
+	cancel context.CancelFunc
+	done   chan struct{}
+	kick   chan struct{}
+
+	mu    sync.Mutex
+	peers map[string]*Peer // by addr; seeds + roster
+}
+
+const (
+	syncInterval      = 10 * time.Second
+	heartbeatInterval = 2 * time.Minute
+	fanout            = 3
+)
+
+// Start opens the fleet store at dbPath, brings up the tailcat transport and
+// starts replicating. It returns once the node is listening.
+func Start(ctx context.Context, cfg Config, dbPath string, logger *slog.Logger) (*Node, error) {
+	if cfg.Secret == "" {
+		return nil, errors.New("fleet: secret is required")
+	}
+	store, err := OpenStore(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	nk, err := loadKey(store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	logf := func(format string, args ...any) { logger.Debug("tailcat: " + fmt.Sprintf(format, args...)) }
+	tr, err := newTailcatTransport(ctx, nk, cfg.Secret, logf)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	return start(ctx, cfg, store, tr, logger)
+}
+
+func loadKey(store *Store) (key.NodePrivate, error) {
+	var nk key.NodePrivate
+	s, err := store.Identity("nodekey")
+	if err != nil {
+		return nk, err
+	}
+	if s != "" {
+		return nk, nk.UnmarshalText([]byte(s))
+	}
+	nk = key.NewNode()
+	b, _ := nk.MarshalText()
+	return nk, store.SetIdentity("nodekey", string(b))
+}
+
+func start(ctx context.Context, cfg Config, store *Store, tr Transport, logger *slog.Logger) (*Node, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	n := &Node{
+		cfg: cfg, store: store, tr: tr, logger: logger.With("component", "fleet"),
+		cancel: cancel, done: make(chan struct{}), kick: make(chan struct{}, 1),
+		peers: map[string]*Peer{},
+	}
+	n.httpc = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+				return tr.Dial(ctx, strings.TrimSuffix(addr, ":80"))
+			},
+		},
+	}
+	for _, seed := range cfg.Seeds {
+		n.peers[seed] = &Peer{NodeInfo: NodeInfo{Addr: seed}}
+	}
+	if err := n.heartbeat(ctx); err != nil {
+		return nil, err
+	}
+	n.loadRoster(ctx)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sync", n.handleSync)
+	go http.Serve(tr.Listener(), mux)
+	go n.run(ctx)
+	n.logger.Info("fleet node started", "id", n.ID(), "name", cfg.Name, "addr", tr.Addr())
+	return n, nil
+}
+
+func (n *Node) ID() string   { return n.tr.ID() }
+func (n *Node) Addr() string { return n.tr.Addr() }
+
+func (n *Node) Close() error {
+	n.cancel()
+	<-n.done
+	n.tr.Close()
+	return n.store.Close()
+}
+
+// Put writes key locally and nudges the sync loop so peers see it promptly.
+func (n *Node) Put(ctx context.Context, key string, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := n.store.Append(ctx, n.ID(), key, b); err != nil {
+		return err
+	}
+	n.Kick()
+	return nil
+}
+
+func (n *Node) Delete(ctx context.Context, key string) error {
+	if _, err := n.store.Append(ctx, n.ID(), key, nil); err != nil {
+		return err
+	}
+	n.Kick()
+	return nil
+}
+
+func (n *Node) Get(ctx context.Context, key string) (Entry, bool, error) {
+	return n.store.Get(ctx, key)
+}
+func (n *Node) List(ctx context.Context, prefix string) ([]Entry, error) {
+	return n.store.List(ctx, prefix)
+}
+
+// Kick requests an immediate sync round.
+func (n *Node) Kick() {
+	select {
+	case n.kick <- struct{}{}:
+	default:
+	}
+}
+
+func (n *Node) Peers() []Peer {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]Peer, 0, len(n.peers))
+	for _, p := range n.peers {
+		out = append(out, *p)
+	}
+	return out
+}
+
+func (n *Node) heartbeat(ctx context.Context) error {
+	return n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.cfg.Name, Addr: n.Addr(), Seen: time.Now().UTC()})
+}
+
+// loadRoster merges "node/*" entries into the peer set.
+func (n *Node) loadRoster(ctx context.Context) {
+	entries, err := n.store.List(ctx, "node/")
+	if err != nil {
+		n.logger.Error("fleet roster", "error", err)
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, e := range entries {
+		id := strings.TrimPrefix(e.Key, "node/")
+		if id == n.ID() {
+			continue
+		}
+		var info NodeInfo
+		if err := json.Unmarshal(e.Value, &info); err != nil {
+			continue
+		}
+		for addr, p := range n.peers {
+			if p.ID == id && addr != info.Addr {
+				delete(n.peers, addr) // node moved
+			}
+		}
+		p, ok := n.peers[info.Addr]
+		if !ok {
+			p = &Peer{}
+			n.peers[info.Addr] = p
+		}
+		p.ID = id
+		p.NodeInfo = info
+	}
+}
+
+func (n *Node) run(ctx context.Context) {
+	defer close(n.done)
+	sync := time.NewTicker(syncInterval)
+	defer sync.Stop()
+	hb := time.NewTicker(heartbeatInterval)
+	defer hb.Stop()
+	n.syncRound(ctx, len(n.peers)) // first round: everyone we know
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-hb.C:
+			if err := n.heartbeat(ctx); err != nil {
+				n.logger.Error("fleet heartbeat", "error", err)
+			}
+		case <-sync.C:
+			n.syncRound(ctx, fanout)
+		case <-n.kick:
+			n.syncRound(ctx, len(n.Peers()))
+		}
+	}
+}
+
+// syncRound syncs with up to k randomly chosen peers.
+func (n *Node) syncRound(ctx context.Context, k int) {
+	peers := n.Peers()
+	rand.Shuffle(len(peers), func(i, j int) { peers[i], peers[j] = peers[j], peers[i] })
+	if k < len(peers) {
+		peers = peers[:k]
+	}
+	var wg sync.WaitGroup
+	for _, p := range peers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := n.syncWith(ctx, p.Addr)
+			n.mu.Lock()
+			if q, ok := n.peers[p.Addr]; ok {
+				if err != nil {
+					q.Error = err.Error()
+				} else {
+					q.Error = ""
+					q.LastSync = time.Now().UTC()
+				}
+			}
+			n.mu.Unlock()
+			if err != nil && ctx.Err() == nil {
+				n.logger.Warn("fleet sync failed", "peer", p.ID, "name", p.Name, "error", err)
+			}
+		}()
+	}
+	wg.Wait()
+	n.loadRoster(ctx)
+}
+
+type syncMsg struct {
+	Have VersionVector `json:"have"`
+	Ops  []Op          `json:"ops,omitempty"`
+}
+
+// syncWith does a pull then a push against one peer: the peer replies with
+// what we lack, then we send what it lacks.
+func (n *Node) syncWith(ctx context.Context, addr string) error {
+	have, err := n.store.Version(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := n.exchange(ctx, addr, syncMsg{Have: have})
+	if err != nil {
+		return err
+	}
+	if err := n.store.Apply(ctx, resp.Ops); err != nil {
+		return err
+	}
+	ops, err := n.store.OpsAfter(ctx, resp.Have)
+	if err != nil || len(ops) == 0 {
+		return err
+	}
+	have, err = n.store.Version(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err = n.exchange(ctx, addr, syncMsg{Have: have, Ops: ops})
+	if err != nil {
+		return err
+	}
+	return n.store.Apply(ctx, resp.Ops)
+}
+
+func (n *Node) exchange(ctx context.Context, addr string, msg syncMsg) (syncMsg, error) {
+	body, _ := json.Marshal(msg)
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/sync", bytes.NewReader(body))
+	if err != nil {
+		return syncMsg{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := n.httpc.Do(req)
+	if err != nil {
+		return syncMsg{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return syncMsg{}, fmt.Errorf("sync: %s", res.Status)
+	}
+	var out syncMsg
+	return out, json.NewDecoder(res.Body).Decode(&out)
+}
+
+// handleSync serves the peer side of syncWith over the transport.
+func (n *Node) handleSync(w http.ResponseWriter, r *http.Request) {
+	var msg syncMsg
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	if err := n.store.Apply(ctx, msg.Ops); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ops, err := n.store.OpsAfter(ctx, msg.Have)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	have, err := n.store.Version(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(syncMsg{Have: have, Ops: ops})
+	if len(msg.Ops) > 0 {
+		n.loadRoster(ctx)
+	}
+}
