@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func testNode(t *testing.T, name string, seeds ...string) *Node {
+func testNode(t *testing.T, name string, join ...string) *Node {
 	t.Helper()
 	store, err := OpenStore(filepath.Join(t.TempDir(), "fleet.db"))
 	if err != nil {
@@ -18,11 +18,16 @@ func testNode(t *testing.T, name string, seeds ...string) *Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := start(context.Background(), Config{Name: name, Seeds: seeds}, store, tr, slog.Default())
+	n, err := start(context.Background(), Config{Name: name}, store, tr, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { n.Close() })
+	for _, addr := range join {
+		if err := n.Join(context.Background(), addr); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return n
 }
 
@@ -84,6 +89,16 @@ func TestReplicationAndDiscovery(t *testing.T) {
 	syncAll(ctx, a, b, c)
 	if _, ok := get(t, c, "k"); ok {
 		t.Error("c: k still present after delete")
+	}
+}
+
+func TestJoinFailure(t *testing.T) {
+	a := testNode(t, "a")
+	if err := a.Join(context.Background(), "127.0.0.1:1"); err == nil {
+		t.Fatal("join of dead address succeeded")
+	}
+	if len(a.Peers()) != 0 {
+		t.Errorf("failed join left peers: %+v", a.Peers())
 	}
 }
 
