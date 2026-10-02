@@ -23,6 +23,10 @@ type Service struct {
 	ctx    context.Context
 	path   string
 	logger *slog.Logger
+	// StatusExtra, if set, contributes fields to GET /api/fleet when joined.
+	// Consumers of the fleet (e.g. shared credentials) use it to surface
+	// their view without the fleet package knowing about them.
+	StatusExtra func() map[string]any
 
 	mu    sync.Mutex
 	store *Store
@@ -69,6 +73,21 @@ func (s *Service) Node() (*Node, error) {
 		return nil, ErrNotJoined
 	}
 	return s.node, nil
+}
+
+// Meta reads a local, non-replicated value tied to this fleet membership
+// (wiped by Leave). Consumers use it to remember what they have published.
+func (s *Service) Meta(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.Identity("meta/" + key)
+}
+
+// SetMeta writes a local, non-replicated value; see Meta.
+func (s *Service) SetMeta(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.SetIdentity("meta/"+key, value)
 }
 
 // Init creates a new fleet with this node as its first member.

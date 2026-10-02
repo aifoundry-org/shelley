@@ -3296,6 +3296,13 @@ func (s *Server) handleDismissUpgradePrompt(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RefreshModels rebuilds the non-custom model catalog, e.g. after credentials
+// changed.
+func (s *Server) RefreshModels(ctx context.Context) error {
+	_, err := s.refreshModels(ctx)
+	return err
+}
+
 // errRefreshNotConfigured means the server has no model refresher; the
 // refresh endpoint reports it as 501 Not Implemented.
 var errRefreshNotConfigured = errors.New("model refresh is not configured")
@@ -4707,6 +4714,15 @@ type subscriptionProviderStatus struct {
 	LoggedIn  bool   `json:"logged_in"`
 	Status    string `json:"status"`
 	ExpiresAt string `json:"expires_at,omitempty"`
+	// Fleet is this node's role for a fleet-shared credential, e.g.
+	// "owner (epoch 2)" or "following alpha (...)"; empty outside a fleet.
+	Fleet string `json:"fleet,omitempty"`
+	// FleetOwner names the fleet node whose login this node is using, when
+	// it is not its own.
+	FleetOwner string `json:"fleet_owner,omitempty"`
+	// Fallback is the source serving this provider's models when not logged
+	// in (e.g. a gateway), so the UI can explain why models still work.
+	Fallback string `json:"fallback,omitempty"`
 }
 
 type subscriptionsResponse struct {
@@ -4723,12 +4739,18 @@ type subscriptionLoginSession struct {
 	Claude     *oauth.AnthropicLoginFlow
 }
 
-func (s *Server) subscriptionStore() *oauth.Store {
-	path := s.credentialsPath
-	if path == "" {
-		path = oauth.DefaultCredentialsPath()
+func (s *Server) subscriptionStore() oauth.Credentials {
+	if s.credentials != nil {
+		return s.credentials
 	}
-	return &oauth.Store{Path: path}
+	return &oauth.Store{Path: s.subscriptionStorePath()}
+}
+
+func (s *Server) subscriptionStorePath() string {
+	if s.credentialsPath != "" {
+		return s.credentialsPath
+	}
+	return oauth.DefaultCredentialsPath()
 }
 
 func validSubscriptionProvider(provider string) bool {
@@ -4739,19 +4761,46 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	store := s.subscriptionStore()
 	now := time.Now()
 	resp := subscriptionsResponse{
-		CredentialsPath: store.Path,
+		CredentialsPath: s.subscriptionStorePath(),
 		Providers:       map[string]subscriptionProviderStatus{},
 	}
+	describer, _ := store.(interface {
+		Describe(provider string) string
+		Owner(provider string) string
+	})
 	for _, provider := range []string{"anthropic", "openai", "kimi"} {
 		st := subscriptionProviderStatus{Status: oauth.Status(store, provider, now)}
 		if tok, err := store.Load(provider); err == nil {
 			st.LoggedIn = true
 			st.ExpiresAt = tok.ExpiresAt.Format(time.RFC3339)
+		} else {
+			st.Fallback = s.providerFallbackSource(provider)
+		}
+		if describer != nil {
+			st.Fleet = describer.Describe(provider)
+			if st.FleetOwner = describer.Owner(provider); st.FleetOwner != "" {
+				st.Status = strings.Replace(st.Status, "logged in", "using "+st.FleetOwner+"'s login", 1)
+			}
 		}
 		resp.Providers[provider] = st
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// providerFallbackSource returns the source currently serving models of a
+// subscription provider, or "" if none are available.
+func (s *Server) providerFallbackSource(provider string) string {
+	if s.llmManager == nil {
+		return ""
+	}
+	want := map[string]models.Provider{"anthropic": models.ProviderAnthropic, "openai": models.ProviderOpenAI, "kimi": models.ProviderKimiCoding}[provider]
+	for _, id := range s.llmManager.GetAvailableModels() {
+		if mi := s.llmManager.GetModelInfo(id); mi != nil && mi.Provider == want && mi.Source != "" {
+			return mi.Source
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleSubscriptionLogout(w http.ResponseWriter, r *http.Request) {
