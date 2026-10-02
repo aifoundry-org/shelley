@@ -34,7 +34,6 @@ type tailcatTransport struct {
 	invite tailcat.Addr // with PSK: what joiners need
 	psk    tailcat.PresharedKey
 	nodeID string
-	key    key.NodePrivate
 	logf   logger.Logf
 
 	mu      sync.Mutex
@@ -45,7 +44,6 @@ func newTailcatTransport(ctx context.Context, nk key.NodePrivate, psk tailcat.Pr
 	t := &tailcatTransport{
 		psk:     psk,
 		nodeID:  nk.Public().String(),
-		key:     nk,
 		logf:    logf,
 		clients: map[tailcat.Addr]*tailcat.Client{},
 	}
@@ -99,7 +97,11 @@ func (t *tailcatTransport) client(addr tailcat.Addr) (*tailcat.Client, error) {
 		return nil, err
 	}
 	ci.PresharedKey = t.psk
-	c := &tailcat.Client{Server: ci.Addr(), Key: t.key, Logf: t.logf}
+	// The client must NOT reuse the server's node key: each tailcat Client
+	// has its own magicsock and DERP connection, and DERP treats two live
+	// connections under one key as a cloned key and drops traffic to both.
+	// Identity is the server key; clients are anonymous.
+	c := &tailcat.Client{Server: ci.Addr(), Logf: t.logf}
 	t.clients[addr] = c
 	return c, nil
 }
