@@ -19,7 +19,7 @@ type refreshFunc func(ctx context.Context, refreshToken string) (Token, error)
 // the stored token is near expiry. It is safe for concurrent use.
 type TokenSource struct {
 	Provider string
-	Store    *Store
+	Store    Credentials
 
 	now     func() time.Time // defaults to time.Now
 	refresh refreshFunc      // defaults to the provider's refresh endpoint
@@ -29,7 +29,7 @@ type TokenSource struct {
 
 // NewAnthropicTokenSource builds a TokenSource backed by the Anthropic OAuth
 // refresh endpoint and the given credential store.
-func NewAnthropicTokenSource(store *Store, httpc *http.Client) *TokenSource {
+func NewAnthropicTokenSource(store Credentials, httpc *http.Client) *TokenSource {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
@@ -44,7 +44,7 @@ func NewAnthropicTokenSource(store *Store, httpc *http.Client) *TokenSource {
 
 // NewOpenAITokenSource builds a TokenSource backed by the OpenAI/Codex OAuth
 // refresh endpoint and the given credential store.
-func NewOpenAITokenSource(store *Store, httpc *http.Client) *TokenSource {
+func NewOpenAITokenSource(store Credentials, httpc *http.Client) *TokenSource {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
@@ -86,15 +86,35 @@ func (s *TokenSource) AccessToken(ctx context.Context) (string, error) {
 	if !tok.Expired(now(), refreshSkew) {
 		return tok.AccessToken, nil
 	}
+	refreshed, err := s.refreshLocked(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	return refreshed.AccessToken, nil
+}
+
+// Refresh mints and persists a new token now, regardless of expiry.
+func (s *TokenSource) Refresh(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, err := s.Store.Load(s.Provider)
+	if err != nil {
+		return err
+	}
+	_, err = s.refreshLocked(ctx, tok)
+	return err
+}
+
+func (s *TokenSource) refreshLocked(ctx context.Context, tok Token) (Token, error) {
 	if tok.RefreshToken == "" {
-		return "", fmt.Errorf("%s token expired and no refresh token available; re-run login", s.Provider)
+		return Token{}, fmt.Errorf("%s token expired and no refresh token available; re-run login", s.Provider)
 	}
 	refreshed, err := s.refresh(ctx, tok.RefreshToken)
 	if err != nil {
-		return "", fmt.Errorf("refresh %s token: %w", s.Provider, err)
+		return Token{}, fmt.Errorf("refresh %s token: %w", s.Provider, err)
 	}
 	if err := s.Store.Save(s.Provider, refreshed); err != nil {
-		return "", fmt.Errorf("persist refreshed %s token: %w", s.Provider, err)
+		return Token{}, fmt.Errorf("persist refreshed %s token: %w", s.Provider, err)
 	}
-	return refreshed.AccessToken, nil
+	return refreshed, nil
 }
