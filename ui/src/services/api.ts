@@ -47,6 +47,10 @@ export interface SubscriptionProviderStatus {
   expires_at?: string;
   /** Fleet role for a shared credential: "owner (epoch N)" or "following <node> (...)". */
   fleet?: string;
+  /** Fleet node whose login this node is using, when not its own. */
+  fleet_owner?: string;
+  /** Source serving this provider's models while not logged in (e.g. a gateway). */
+  fallback?: string;
 }
 
 export interface SubscriptionsStatus {

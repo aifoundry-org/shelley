@@ -203,14 +203,23 @@
                 >
                   {{ subscriptions?.providers[provider.id]?.status || "Unknown" }}
                 </div>
-                <div v-if="subscriptions?.providers[provider.id]?.fleet" class="subscriptions-menu-muted">
+                <div
+                  v-if="subscriptions?.providers[provider.id]?.fleet"
+                  class="subscriptions-menu-muted"
+                >
                   Fleet: {{ subscriptions?.providers[provider.id]?.fleet }}
+                </div>
+                <div
+                  v-else-if="subscriptions?.providers[provider.id]?.fallback"
+                  class="subscriptions-menu-muted"
+                >
+                  Models for this provider are currently served by
+                  {{ subscriptions?.providers[provider.id]?.fallback }}.
                 </div>
               </div>
               <button
                 v-if="
-                  subscriptions?.providers[provider.id]?.logged_in &&
-                  !isFleetFollower(provider.id)
+                  subscriptions?.providers[provider.id]?.logged_in && !isFleetFollower(provider.id)
                 "
                 class="subscriptions-menu-small-btn"
                 :disabled="subscriptionBusy !== null"
@@ -228,6 +237,10 @@
               </button>
             </div>
 
+            <div v-if="isFleetFollower(provider.id)" class="subscriptions-menu-muted">
+              Take over logs in here and moves ownership of this subscription from
+              {{ subscriptions?.providers[provider.id]?.fleet_owner }} to this node.
+            </div>
             <div class="subscriptions-menu-muted">
               <template v-if="provider.id === 'kimi'">
                 Kimi sign-in uses a third-party OAuth client integration.
@@ -583,7 +596,7 @@ async function refreshAfterSubscriptionChange() {
 
 /** True when another fleet node owns this credential; logging in here takes it over. */
 function isFleetFollower(provider: SubscriptionProvider): boolean {
-  return subscriptions.value?.providers[provider]?.fleet?.startsWith("following") ?? false;
+  return !!subscriptions.value?.providers[provider]?.fleet_owner;
 }
 
 async function logoutSubscription(provider: SubscriptionProvider) {
