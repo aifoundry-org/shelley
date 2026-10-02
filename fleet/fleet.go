@@ -31,8 +31,6 @@ type Config struct {
 	Name string `json:"name"`
 	// Secret is shared by every node in the fleet; it gates the transport.
 	Secret string `json:"secret"`
-	// Seeds are tailcat addresses of nodes to contact first.
-	Seeds []string `json:"seeds"`
 }
 
 // NodeInfo is the value stored under "node/<id>".
@@ -123,9 +121,6 @@ func start(ctx context.Context, cfg Config, store *Store, tr Transport, logger *
 			},
 		},
 	}
-	for _, seed := range cfg.Seeds {
-		n.peers[seed] = &Peer{NodeInfo: NodeInfo{Addr: seed}}
-	}
 	if err := n.heartbeat(ctx); err != nil {
 		return nil, err
 	}
@@ -175,6 +170,28 @@ func (n *Node) Get(ctx context.Context, key string) (Entry, bool, error) {
 }
 func (n *Node) List(ctx context.Context, prefix string) ([]Entry, error) {
 	return n.store.List(ctx, prefix)
+}
+
+// Join adds a peer by address and syncs with it. Once the sync succeeds the
+// roster is persisted, so a join survives restarts.
+func (n *Node) Join(ctx context.Context, addr string) error {
+	if addr == n.Addr() {
+		return errors.New("fleet: cannot join self")
+	}
+	n.mu.Lock()
+	if _, ok := n.peers[addr]; !ok {
+		n.peers[addr] = &Peer{NodeInfo: NodeInfo{Addr: addr}}
+	}
+	n.mu.Unlock()
+	if err := n.syncWith(ctx, addr); err != nil {
+		n.mu.Lock()
+		delete(n.peers, addr)
+		n.mu.Unlock()
+		return err
+	}
+	n.loadRoster(ctx)
+	n.Kick()
+	return nil
 }
 
 // Kick requests an immediate sync round.
@@ -238,7 +255,7 @@ func (n *Node) run(ctx context.Context) {
 	defer sync.Stop()
 	hb := time.NewTicker(heartbeatInterval)
 	defer hb.Stop()
-	n.syncRound(ctx, len(n.peers)) // first round: everyone we know
+	n.syncRound(ctx, len(n.Peers())) // first round: everyone we know
 	for {
 		select {
 		case <-ctx.Done():

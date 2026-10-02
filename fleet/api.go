@@ -11,6 +11,7 @@ import (
 // server under /api/fleet/.
 //
 //	GET    /api/fleet              status: id, addr, peers
+//	POST   /api/fleet/join         {"addr": "tc…"} contact a node and join its fleet
 //	GET    /api/fleet/kv?prefix=p  list entries
 //	GET    /api/fleet/kv/{key...}  one entry
 //	PUT    /api/fleet/kv/{key...}  write JSON body
@@ -19,6 +20,18 @@ func (n *Node) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/fleet", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"id": n.ID(), "name": n.cfg.Name, "addr": n.Addr(), "peers": n.Peers()})
+	})
+	mux.HandleFunc("POST /api/fleet/join", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Addr string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Addr == "" {
+			http.Error(w, "body must be {\"addr\": ...}", http.StatusBadRequest)
+			return
+		}
+		if err := n.Join(r.Context(), req.Addr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/fleet/kv", func(w http.ResponseWriter, r *http.Request) {
 		entries, err := n.List(r.Context(), r.URL.Query().Get("prefix"))
