@@ -71,6 +71,21 @@ func (s *Service) Node() (*Node, error) {
 	return s.node, nil
 }
 
+// Meta reads a local, non-replicated value tied to this fleet membership
+// (wiped by Leave). Consumers use it to remember what they have published.
+func (s *Service) Meta(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.Identity("meta/" + key)
+}
+
+// SetMeta writes a local, non-replicated value; see Meta.
+func (s *Service) SetMeta(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.SetIdentity("meta/"+key, value)
+}
+
 // Init creates a new fleet with this node as its first member.
 func (s *Service) Init(name string) error {
 	s.mu.Lock()
