@@ -11,7 +11,7 @@ import (
 // Handler serves the local (operator-facing) fleet API, mounted by the shelley
 // server under /api/fleet/.
 //
-//	GET    /api/fleet              {joined:false} or id, name, addr, peers
+//	GET    /api/fleet              {joined:false} or id, name, addr, peers (+ StatusExtra)
 //	POST   /api/fleet/init         {"name": …}            create a fleet
 //	GET    /api/fleet/invite       {"invite": "tc…"}      token for others to join
 //	POST   /api/fleet/join         {"name": …, "invite": "tc…"}
@@ -53,7 +53,13 @@ func (s *Service) Handler() http.Handler {
 			writeJSON(w, map[string]any{"joined": false})
 			return
 		}
-		writeJSON(w, map[string]any{"joined": true, "id": n.ID(), "name": n.name, "addr": n.Addr(), "peers": n.Peers()})
+		status := map[string]any{"joined": true, "id": n.ID(), "name": n.name, "addr": n.Addr(), "peers": n.Peers()}
+		if s.StatusExtra != nil {
+			for k, v := range s.StatusExtra() {
+				status[k] = v
+			}
+		}
+		writeJSON(w, status)
 	})
 	mux.HandleFunc("POST /api/fleet/init", func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Name string }
