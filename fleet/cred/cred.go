@@ -124,6 +124,26 @@ func (m *Manager) Delete(provider string) error {
 	return nil
 }
 
+// Owner returns the name of the other fleet node whose login this node is
+// using for provider, or "" if this node owns it or no one does.
+func (m *Manager) Owner(provider string) string {
+	n, best, _ := m.best(context.Background(), provider)
+	if n == nil || best == nil || best.owner == n.ID() {
+		return ""
+	}
+	return m.nodeName(n, best.owner)
+}
+
+func (m *Manager) nodeName(n *fleet.Node, id string) string {
+	if e, ok, _ := n.Get(context.Background(), "node/"+id); ok {
+		var info fleet.NodeInfo
+		if json.Unmarshal(e.Value, &info) == nil {
+			return info.Name
+		}
+	}
+	return id
+}
+
 // Describe reports this node's role for provider, or "" outside a fleet.
 func (m *Manager) Describe(provider string) string {
 	n, best, _ := m.best(context.Background(), provider)
