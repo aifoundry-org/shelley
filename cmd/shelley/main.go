@@ -21,6 +21,7 @@ import (
 	"shelley.exe.dev/client"
 	"shelley.exe.dev/db"
 	"shelley.exe.dev/db/generated"
+	"shelley.exe.dev/fleet"
 	"shelley.exe.dev/llm/llmhttp"
 	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/modelproviders"
@@ -91,6 +92,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "  client [flags] <subcommand>   CLI client (chat, read, list, archive) (experimental)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  mcp <command>                 Use MCP servers (list, call, add, rm, auth, restart)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  skill <cat|ls|new> [name]     Read, list, or create skills\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  fleet <init|join|status|...>  Create, join or inspect the p2p fleet (see shelley fleet -h)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  dtach <new|attach> ...        Legacy persistent PTY session helper\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  highlights <scaffold|verify|attach|show> ...  Commit file order and line highlights (git notes)\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  exe-scroll [args]              Run the embedded exe-scroll binary\n")
@@ -119,6 +121,8 @@ func main() {
 		client.Run(args[1:])
 	case "mcp":
 		client.RunMCP(args[1:])
+	case "fleet":
+		client.RunFleet(args[1:])
 	case "skill":
 		runSkill(args[1:])
 	case "dtach":
@@ -259,6 +263,14 @@ func runServe(global GlobalConfig, args []string) {
 	svr.Banner = *banner
 	svr.ArchiveStorePort = *archiveStorePort
 	svr.SocketActivated = *systemdActivation
+
+	fleetSvc, err := fleet.Open(context.Background(), strings.TrimSuffix(global.DBPath, ".db")+"-fleet.db", logger)
+	if err != nil {
+		logger.Error("Failed to open fleet", "error", err)
+		os.Exit(1)
+	}
+	defer fleetSvc.Close()
+	svr.Mount("/api/fleet", fleetSvc.Handler())
 
 	// Load notification channels from DB.
 	svr.ReloadNotificationChannels()
