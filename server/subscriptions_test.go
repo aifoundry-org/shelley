@@ -27,7 +27,7 @@ func TestHandleSubscriptionsReportsCredentialStatus(t *testing.T) {
 			t.Fatalf("save token: %v", err)
 		}
 	}
-	s := &Server{credentialsPath: credPath}
+	s := &Server{credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil)
 	rec := httptest.NewRecorder()
@@ -77,9 +77,9 @@ func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing
 			}
 			refreshed := false
 			s := &Server{
-				llmManager:      mgr,
-				logger:          slog.Default(),
-				credentialsPath: credPath,
+				llmManager:  mgr,
+				logger:      slog.Default(),
+				credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath,
 				refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 					refreshed = true
 					return []models.Built{{ID: "new-built", Provider: models.ProviderBuiltIn, Service: predictable.NewService()}}, nil
@@ -222,7 +222,7 @@ func TestKimiSubscriptionDeviceLogin(t *testing.T) {
 				}
 				refreshed := false
 				s := &Server{
-					credentialsPath: credPath, subscriptionSessions: map[string]subscriptionLoginSession{},
+					credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath, subscriptionSessions: map[string]subscriptionLoginSession{},
 					llmManager: mgr, logger: slog.Default(),
 					refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 						refreshed = true
@@ -326,7 +326,7 @@ func TestKimiSubscriptionExpiredStatus(t *testing.T) {
 	if err := store.Save("kimi", oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: expiresAt}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{credentialsPath: credPath}
+	s := &Server{credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath}
 	rec := httptest.NewRecorder()
 	s.handleSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
 	var got subscriptionsResponse

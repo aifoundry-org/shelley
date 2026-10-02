@@ -180,9 +180,15 @@
                 >
                   {{ subscriptions?.providers[provider.id]?.status || "Unknown" }}
                 </div>
+                <div v-if="subscriptions?.providers[provider.id]?.fleet" class="subscriptions-menu-muted">
+                  Fleet: {{ subscriptions?.providers[provider.id]?.fleet }}
+                </div>
               </div>
               <button
-                v-if="subscriptions?.providers[provider.id]?.logged_in"
+                v-if="
+                  subscriptions?.providers[provider.id]?.logged_in &&
+                  !isFleetFollower(provider.id)
+                "
                 class="subscriptions-menu-small-btn"
                 :disabled="subscriptionBusy !== null"
                 @click="logoutSubscription(provider.id)"
@@ -195,7 +201,7 @@
                 :disabled="subscriptionBusy !== null"
                 @click="startSubscriptionLogin(provider.id)"
               >
-                Login
+                {{ isFleetFollower(provider.id) ? "Take over" : "Login" }}
               </button>
             </div>
 
@@ -575,6 +581,11 @@ async function toggleSubscriptions() {
 async function refreshAfterSubscriptionChange() {
   await refreshSubscriptions();
   emit("models-changed");
+}
+
+/** True when another fleet node owns this credential; logging in here takes it over. */
+function isFleetFollower(provider: SubscriptionProvider): boolean {
+  return subscriptions.value?.providers[provider]?.fleet?.startsWith("following") ?? false;
 }
 
 async function logoutSubscription(provider: SubscriptionProvider) {
