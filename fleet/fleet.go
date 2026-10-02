@@ -55,7 +55,10 @@ type Node struct {
 const (
 	syncInterval      = 10 * time.Second
 	heartbeatInterval = 2 * time.Minute
-	fanout            = 3
+	// staleAfter is how long a node may go without heartbeating before the
+	// rest of the fleet drops it from the roster.
+	staleAfter = 24 * time.Hour
+	fanout     = 3
 )
 
 // start brings up a node on an open store and transport. The caller owns the
@@ -165,9 +168,30 @@ func (n *Node) Peers() []Peer {
 	return out
 }
 
+// heartbeat refreshes our roster entry and retracts entries of nodes that have
+// not heartbeated for staleAfter (crashed, or left without saying so).
 func (n *Node) heartbeat(ctx context.Context) error {
-	return n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.name, Addr: n.Addr(), Seen: time.Now().UTC()})
+	if err := n.Put(ctx, "node/"+n.ID(), NodeInfo{Name: n.name, Addr: n.Addr(), Seen: time.Now().UTC()}); err != nil {
+		return err
+	}
+	entries, err := n.store.List(ctx, "node/")
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		var info NodeInfo
+		if e.Key == "node/"+n.ID() || json.Unmarshal(e.Value, &info) != nil || !stale(info) {
+			continue
+		}
+		n.logger.Info("dropping stale node", "id", strings.TrimPrefix(e.Key, "node/"), "name", info.Name, "seen", info.Seen)
+		if _, err := n.store.Append(ctx, n.ID(), e.Key, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
+func stale(info NodeInfo) bool { return time.Since(info.Seen) > staleAfter }
 
 // loadRoster rebuilds the peer set from the live "node/*" entries. Peers with
 // no ID yet (a Join in flight) are kept until the roster names them.
@@ -191,7 +215,7 @@ func (n *Node) loadRoster(ctx context.Context) {
 			continue
 		}
 		var info NodeInfo
-		if err := json.Unmarshal(e.Value, &info); err != nil {
+		if err := json.Unmarshal(e.Value, &info); err != nil || stale(info) {
 			continue
 		}
 		p, ok := n.peers[info.Addr]

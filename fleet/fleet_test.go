@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testNode(t *testing.T, name string, join ...string) *Node {
@@ -144,5 +145,45 @@ func TestLeaveRetractsRosterEntry(t *testing.T) {
 	b.syncRound(ctx, 1)
 	if got := a.Peers(); len(got) != 0 {
 		t.Errorf("a still has peers after b left: %+v", got)
+	}
+}
+
+func TestStaleNodeDropped(t *testing.T) {
+	ctx := context.Background()
+	a := testNode(t, "a")
+	b := testNode(t, "b", a.Addr())
+	syncAll(ctx, a, b)
+
+	// A node "x" that heartbeated 25h ago and is not reachable.
+	old, _ := json.Marshal(NodeInfo{Name: "x", Addr: "127.0.0.1:1", Seen: time.Now().Add(-25 * time.Hour)})
+	if _, err := a.store.Append(ctx, "x", "node/x", old); err != nil {
+		t.Fatal(err)
+	}
+	a.loadRoster(ctx)
+	for _, p := range a.Peers() {
+		if p.ID == "x" {
+			t.Fatal("stale node in peer set")
+		}
+	}
+
+	// Heartbeat tombstones it; b learns the tombstone.
+	if err := a.heartbeat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	syncAll(ctx, a, b)
+	for _, n := range []*Node{a, b} {
+		if _, ok, _ := n.Get(ctx, "node/x"); ok {
+			t.Errorf("%s: node/x still live", n.ID())
+		}
+	}
+
+	// x comes back: its newer heartbeat wins over the tombstone.
+	fresh, _ := json.Marshal(NodeInfo{Name: "x", Addr: "127.0.0.1:1", Seen: time.Now()})
+	if _, err := b.store.Append(ctx, "x", "node/x", fresh); err != nil {
+		t.Fatal(err)
+	}
+	syncAll(ctx, a, b)
+	if _, ok, _ := a.Get(ctx, "node/x"); !ok {
+		t.Error("a: returning node not restored")
 	}
 }
