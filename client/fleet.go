@@ -18,9 +18,11 @@ func RunFleet(args []string) {
 		fmt.Fprintf(fs.Output(), `Usage: shelley fleet [-url URL] <subcommand> [args...]
 
 Subcommands:
-  status          This node's id, address and peers
-  addr            Print this node's address (give it to "join" on other nodes)
-  join ADDR       Join the fleet that ADDR belongs to
+  init [-name N]         Create a new fleet with this node as first member
+  invite                 Print an invite token (secret!) for other nodes
+  join [-name N] INVITE  Join the fleet that issued INVITE
+  leave                  Leave the fleet and discard its state
+  status                 This node's id, address and peers
   ls [PREFIX]     List entries
   get KEY         Print an entry's value
   put KEY [JSON]  Write an entry (JSON from argument or stdin)
@@ -46,16 +48,27 @@ Subcommands:
 	switch sub[0] {
 	case "status":
 		status, body = cc.fleetDo("GET", "/api/fleet", nil)
-	case "addr":
-		status, body = cc.fleetDo("GET", "/api/fleet", nil)
+	case "init":
+		name, _ := nameFlag(sub[1:])
+		b, _ := json.Marshal(map[string]string{"name": name})
+		status, body = cc.fleetDo("POST", "/api/fleet/init", b)
+	case "invite":
+		status, body = cc.fleetDo("GET", "/api/fleet/invite", nil)
 		if status == 200 {
-			var v struct{ Addr string }
+			var v struct{ Invite string }
 			json.Unmarshal(body, &v)
-			body = []byte(v.Addr + "\n")
+			body = []byte(v.Invite + "\n")
 		}
 	case "join":
-		b, _ := json.Marshal(map[string]string{"addr": arg(1)})
+		name, rest := nameFlag(sub[1:])
+		if len(rest) == 0 {
+			fs.Usage()
+			os.Exit(1)
+		}
+		b, _ := json.Marshal(map[string]string{"name": name, "invite": rest[0]})
 		status, body = cc.fleetDo("POST", "/api/fleet/join", b)
+	case "leave":
+		status, body = cc.fleetDo("POST", "/api/fleet/leave", nil)
 	case "ls":
 		prefix := ""
 		if len(sub) > 1 {
@@ -84,6 +97,13 @@ Subcommands:
 		os.Exit(1)
 	}
 	os.Stdout.Write(body)
+}
+
+func nameFlag(args []string) (string, []string) {
+	fs := flag.NewFlagSet("fleet", flag.ExitOnError)
+	name := fs.String("name", "", "Node name (default: hostname)")
+	fs.Parse(args)
+	return *name, fs.Args()
 }
 
 func (cc *clientConfig) fleetDo(method, path string, body []byte) (int, []byte) {
