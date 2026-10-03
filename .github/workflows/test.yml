@@ -68,7 +68,10 @@ jobs:
         run: make exe-scroll
 
       - name: Run Go tests
-        run: go test -v ./...
+        # Upstream marks a few timing-sensitive tests (bash timeouts, browser
+        # idle shutdown) with CI-Job-Retries trailers honored by its internal
+        # CI. Rerun only the failing tests here instead of patching them.
+        run: go run gotest.tools/gotestsum@v1.13.0 --rerun-fails=2 --packages=./... -- -v
 
       - name: Build shelley binary
         run: go build -o bin/shelley ./cmd/shelley
