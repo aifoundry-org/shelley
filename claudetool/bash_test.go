@@ -448,24 +448,27 @@ func TestExecuteBash(t *testing.T) {
 		{"Slow Command Timeout", true, "tmux"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The timeout must comfortably exceed login-shell startup (hundreds
+			// of ms on CI runners) so "Before timeout" is captured, while the
+			// sleep must comfortably exceed the timeout so the kill is observable.
+			const timeout = time.Second
 			req := bashInput{
-				Command: "echo 'Before timeout'; sleep 1 && echo 'Should not see this'",
+				Command: "echo 'Before timeout'; sleep 5 && echo 'Should not see this'",
 				SlowOK:  tc.slowOK,
 			}
 
 			start := time.Now()
-			_, err := bashTool.executeBash(ctx, req, 200*time.Millisecond)
+			_, err := bashTool.executeBash(ctx, req, timeout)
 			elapsed := time.Since(start)
 
-			// Command should time out after ~200ms, not wait for the full second.
-			if elapsed >= 1*time.Second {
+			if elapsed >= 5*time.Second {
 				t.Errorf("Command did not respect timeout, took %v", elapsed)
 			}
 
 			if err == nil {
-				t.Errorf("Expected 200ms timeout error after %v, got none", elapsed)
+				t.Errorf("Expected %v timeout error after %v, got none", timeout, elapsed)
 			} else if !strings.Contains(err.Error(), "timed out") {
-				t.Errorf("Expected 200ms timeout error after %v, got: %v", elapsed, err)
+				t.Errorf("Expected %v timeout error after %v, got: %v", timeout, elapsed, err)
 			}
 			if err != nil {
 				for _, want := range []string{tc.hint, "Before timeout"} {
