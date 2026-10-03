@@ -23,6 +23,10 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch embedded exe-scroll binaries
+        # Authenticate so the GitHub API call is not subject to the shared
+        # runner IP's unauthenticated rate limit (the script honors GH_TOKEN).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/fetch-exe-scroll.py --all --wait 1800
 
       - name: Generate version tag
