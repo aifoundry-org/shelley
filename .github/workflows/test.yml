@@ -65,6 +65,8 @@ jobs:
           done
 
       - name: Fetch embedded exe-scroll
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make exe-scroll-all
 
       - name: Build all release targets
