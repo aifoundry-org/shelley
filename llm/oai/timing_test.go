@@ -34,7 +34,7 @@ func TestDoSetsResponseTiming(t *testing.T) {
 
 	services := map[string]llm.Service{
 		"chat":      &Service{APIKey: "k", Model: GPT41, ModelURL: chat.URL},
-		"responses": &ResponsesService{APIKey: "k", Model: GPT41, ModelURL: responses.URL},
+		"responses": &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: GPT41, ModelURL: responses.URL},
 	}
 	for name, svc := range services {
 		t.Run(name, func(t *testing.T) {
