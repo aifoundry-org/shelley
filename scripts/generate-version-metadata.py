@@ -13,7 +13,10 @@ from pathlib import Path
 
 
 HEADLESS_SHELL_PLATFORMS = ("linux_amd64", "linux_arm64")
-RELEASES_URL = "https://github.com/boldsoftware/shelley/releases/download"
+# aifoundry fork: headless-shell (and the pin above) deliberately comes from
+# boldsoftware/shelley; aifoundry-org has no p1 build. Shelley binaries do not.
+HEADLESS_SHELL_REPO = "boldsoftware/shelley"
+RELEASES_URL = f"https://github.com/{HEADLESS_SHELL_REPO}/releases/download"
 
 
 def get_headless_shells() -> tuple[str, dict[str, dict[str, str]]]:
@@ -25,10 +28,13 @@ def get_headless_shells() -> tuple[str, dict[str, dict[str, str]]]:
     Shelley releases far outnumber headless-shell releases, so this goes by
     git tags rather than by recent releases.
     """
-    tags = subprocess.check_output(
-        ["git", "tag", "--list", "headless-shell/v*", "--sort=-version:refname"],
+    # The fork's checkout lacks upstream's headless-shell tags, so list them remotely.
+    refs = subprocess.check_output(
+        ["git", "ls-remote", "--tags", "--refs", "--sort=-version:refname",
+         f"https://github.com/{HEADLESS_SHELL_REPO}", "refs/tags/headless-shell/v*"],
         text=True,
     ).split()
+    tags = [ref.removeprefix("refs/tags/") for ref in refs[1::2]]
     if not tags:
         print("ERROR: no headless-shell/v* tags found", file=sys.stderr)
         sys.exit(1)
@@ -55,7 +61,7 @@ def release_assets(tag: str) -> list[str]:
     no release or is a prerelease."""
     for attempt in range(3):
         result = subprocess.run(
-            ["gh", "api", f"repos/boldsoftware/shelley/releases/tags/{urllib.parse.quote(tag, safe='')}",
+            ["gh", "api", f"repos/{HEADLESS_SHELL_REPO}/releases/tags/{urllib.parse.quote(tag, safe='')}",
              "--jq", 'select(.prerelease | not) | .assets[] | select(.state == "uploaded") | .name'],
             capture_output=True,
             text=True,
@@ -99,7 +105,7 @@ def generate_release_json(output_dir: Path) -> None:
 
     version = latest_tag[1:] if latest_tag.startswith("v") else latest_tag
 
-    base_url = f"https://github.com/boldsoftware/shelley/releases/download/{latest_tag}"
+    base_url = f"https://github.com/aifoundry-org/shelley/releases/download/{latest_tag}"
 
     release_info = {
         "tag_name": latest_tag,
@@ -160,7 +166,7 @@ def generate_index_html(output_dir: Path) -> None:
 <html>
 <head><title>Shelley</title></head>
 <body>
-<p><a href="https://github.com/boldsoftware/shelley">github.com/boldsoftware/shelley</a></p>
+<p><a href="https://github.com/aifoundry-org/shelley">github.com/aifoundry-org/shelley</a></p>
 <ul>
 <li><a href="release.json">release.json</a></li>
 <li><a href="commits.json">commits.json</a></li>
