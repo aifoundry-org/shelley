@@ -50,7 +50,7 @@ func warmRequest() *llm.Request {
 // Do sends must match, and only output generation may change.
 func TestWarmCacheReplaysRequestWithPrewarm(t *testing.T) {
 	server, bodies := warmServer(t, func(map[string]any) string { return prewarmReply })
-	s := &ResponsesService{APIKey: "k", Model: GPT61Sol, ModelURL: server.URL, ProviderName: "openai"}
+	s := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: GPT61Sol, ModelURL: server.URL, ProviderName: "openai"}
 	ctx := llmhttp.WithPromptCacheKey(t.Context(), "conv")
 	if _, err := s.Do(ctx, warmRequest()); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestWarmCacheRejectsOutput(t *testing.T) {
 		return `{"status":"incomplete","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],` +
 			`"usage":{"input_tokens":5000,"output_tokens":16}}`
 	})
-	s := &ResponsesService{APIKey: "k", Model: GPT61Sol, ModelURL: server.URL, ProviderName: "openai"}
+	s := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: GPT61Sol, ModelURL: server.URL, ProviderName: "openai"}
 	if _, err := s.WarmCache(t.Context(), warmRequest()); err == nil || !strings.Contains(err.Error(), "generated output") {
 		t.Fatalf("err = %v, want generated output", err)
 	}
@@ -110,7 +110,7 @@ func TestPrewarmSupport(t *testing.T) {
 		{"gpt-6.1-sol", "xai", false},
 		{"o3", "openai", false},
 	} {
-		s := &ResponsesService{Model: Model{ModelName: tc.model}, ModelURL: server.URL, ProviderName: tc.provider}
+		s := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: Model{ModelName: tc.model}, ModelURL: server.URL, ProviderName: tc.provider}
 		got := s.CacheTTL() != 0
 		_, err := s.WarmCache(t.Context(), warmRequest())
 		if got != tc.want || errors.Is(err, llm.ErrCacheWarmUnsupported) == tc.want {
