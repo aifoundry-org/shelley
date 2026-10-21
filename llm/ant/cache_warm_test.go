@@ -36,7 +36,7 @@ func jsonResponse(status int, body string) *http.Response {
 // field must match what Do sends, and only output generation may change.
 func TestWarmCacheReplaysProviderPrefixWithoutOutput(t *testing.T) {
 	transport := &recordingTransport{}
-	s := &Service{APIKey: "k", Model: "claude-opus-4-7", HTTPC: &http.Client{Transport: transport}}
+	s := &Service{Auth: APIKeyAuth{Key: "k"}, Model: "claude-opus-4-7", HTTPC: &http.Client{Transport: transport}}
 	req := &llm.Request{
 		System:        []llm.SystemContent{{Text: "personal assistant", Cache: true}},
 		Tools:         []*llm.Tool{{Name: "lookup", InputSchema: llm.MustSchema(`{"type":"object","properties":{}}`), Cache: true}},
@@ -79,7 +79,7 @@ func TestWarmCacheRejectsOutputAndBudgetThinking(t *testing.T) {
 		return jsonResponse(200, `{"content":[{"type":"tool_use","id":"x","name":"lookup","input":{}}],"stop_reason":"tool_use","usage":{}}`)
 	}}
 	req := &llm.Request{Messages: []llm.Message{llm.UserStringMessage("hi")}}
-	s := &Service{APIKey: "k", Model: "claude-opus-4-7", HTTPC: &http.Client{Transport: transport}}
+	s := &Service{Auth: APIKeyAuth{Key: "k"}, Model: "claude-opus-4-7", HTTPC: &http.Client{Transport: transport}}
 	if _, err := s.WarmCache(t.Context(), req); err == nil || !strings.Contains(err.Error(), "generated output") {
 		t.Fatalf("returned tool call was accepted: %v", err)
 	}
