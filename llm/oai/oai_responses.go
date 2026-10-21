@@ -1172,7 +1172,9 @@ func (s *ResponsesService) WarmCache(ctx context.Context, ir *llm.Request) (llm.
 		return llm.Usage{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+s.APIKey)
+	if err := s.Auth.SetAuth(ctx, httpReq.Header); err != nil {
+		return llm.Usage{}, fmt.Errorf("set auth: %w", err)
+	}
 	if s.Org != "" {
 		httpReq.Header.Set("OpenAI-Organization", s.Org)
 	}
