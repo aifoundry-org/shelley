@@ -421,6 +421,12 @@ func All() []Model {
 			Build: oaiChatSvc(oai.KimiK3Fireworks, "fireworks"),
 		},
 		{
+			ID: "kimi-k3.1-pro", Provider: ProviderKimiCoding,
+			Description: "Kimi K3.1 Pro", APIModelName: "k3.1-pro",
+			APIType: APITypeAnthropicMessages, DefaultBaseURL: DefaultKimiCodingBaseURL,
+			Build: kimiCodingSvc("k3.1-pro", 131072, false),
+		},
+		{
 			ID: "claude-opus-4.8", Provider: ProviderAnthropic,
 			Description: "Claude Opus 4.8 (default)", APIModelName: ant.Claude48Opus,
 			APIType: APITypeAnthropicMessages, DefaultBaseURL: DefaultAnthropicBaseURL,
