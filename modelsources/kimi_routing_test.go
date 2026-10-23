@@ -69,7 +69,8 @@ func TestKimiK3SourceRouting(t *testing.T) {
 					var ids []string
 					for _, b := range built {
 						ids = append(ids, b.ID)
-						if strings.Contains(b.ID, "k3") {
+						// K3.1 Pro is a separate subscription-only model, not a K3 route.
+						if strings.Contains(b.ID, "k3") && !strings.Contains(b.ID, "k3.1") {
 							count++
 						}
 					}

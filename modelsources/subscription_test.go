@@ -94,8 +94,11 @@ func TestSubscriptionBothProviders(t *testing.T) {
 func TestSubscriptionKimiOnly(t *testing.T) {
 	ts := &oauth.TokenSource{Provider: "kimi"}
 	bs := Build(models.All(), []Source{Subscription(nil, nil, ts)}, &http.Client{}, nil)
-	if len(bs) != 2 {
+	if len(bs) != 3 {
 		t.Fatalf("Kimi subscription models = %+v", bs)
+	}
+	if findBuilt(bs, "kimi-k3.1-pro") == nil {
+		t.Fatal("missing Kimi K3.1 Pro model")
 	}
 	b := findBuilt(bs, "kimi-for-coding")
 	if b == nil {
@@ -130,7 +133,7 @@ func TestSubscriptionAllProvidersAndNone(t *testing.T) {
 		t.Fatalf("nil credentials built %d models", len(bs))
 	}
 	bs := Build(models.All(), []Source{Subscription(&oauth.TokenSource{}, &oauth.TokenSource{}, &oauth.TokenSource{})}, &http.Client{}, nil)
-	for _, id := range []string{"claude-opus-4.8", "gpt-5.3-codex", "kimi-for-coding", "kimi-k3-fireworks"} {
+	for _, id := range []string{"claude-opus-4.8", "gpt-5.3-codex", "kimi-for-coding", "kimi-k3-fireworks", "kimi-k3.1-pro"} {
 		if findBuilt(bs, id) == nil {
 			t.Errorf("missing %s", id)
 		}
@@ -152,6 +155,7 @@ func TestSubscriptionKimiStreamingToolRoundTrip(t *testing.T) {
 	}{
 		{"kimi-for-coding", "kimi-for-coding", 32768},
 		{"kimi-k3-fireworks", "k3", 131072},
+		{"kimi-k3.1-pro", "k3.1-pro", 131072},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			store := &oauth.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}

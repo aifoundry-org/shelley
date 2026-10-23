@@ -382,6 +382,7 @@ func All() []Model {
 			APIType: APITypeOpenAIChat, DefaultBaseURL: DefaultFireworksBaseURL,
 			OpenAI: oai.KimiK3Fireworks,
 		},
+		kimiCodingModel("kimi-k3.1-pro", "Kimi K3.1 Pro", "k3.1-pro", 131072, false),
 		{
 			ID: "claude-opus-4.8", Provider: ProviderAnthropic,
 			Description: "Claude Opus 4.8 (default)", APIModelName: ant.Claude48Opus,

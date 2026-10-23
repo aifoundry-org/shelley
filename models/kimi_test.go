@@ -69,3 +69,21 @@ func TestKimiK3CodingRoute(t *testing.T) {
 		t.Fatalf("K3 output = %d (%v), want 131072", output, found)
 	}
 }
+
+func TestKimiK31ProCatalog(t *testing.T) {
+	m := ByID("kimi-k3.1-pro")
+	if m == nil {
+		t.Fatal("Kimi K3.1 Pro model missing")
+	}
+	if m.Provider != ProviderKimiCoding || m.APIModelName != "k3.1-pro" || m.Description != "Kimi K3.1 Pro" || m.APIType != APITypeAnthropicMessages || m.DefaultBaseURL != DefaultKimiCodingBaseURL {
+		t.Fatalf("Kimi K3.1 Pro catalog = %+v", m)
+	}
+	svc := m.Build("", "", &http.Client{}).(*ant.Service)
+	wantLevels := []llm.ThinkingLevel{llm.ThinkingLevelLow, llm.ThinkingLevelHigh, llm.ThinkingLevelMax}
+	if svc.URL != "https://api.kimi.ai/coding/v1/messages" || svc.Model != "k3.1-pro" || svc.MaxTokens != 131072 || !reflect.DeepEqual(svc.SupportedReasoningLevels(), wantLevels) {
+		t.Fatalf("Kimi K3.1 Pro configuration = %+v", svc)
+	}
+	if !svc.SupportsImages() || !svc.AllowEmptyThinkingSignature || !svc.ForceAdaptiveThinking || svc.EnableThinkingBinding || svc.SupportsServerSideWebSearch() {
+		t.Fatalf("Kimi K3.1 Pro compatibility = %+v", svc)
+	}
+}

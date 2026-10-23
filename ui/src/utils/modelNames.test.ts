@@ -70,6 +70,7 @@ eq("grok-4.5", "Grok 4.5");
 eq("kimi-k3-fireworks", "Kimi K3");
 eq("kimi-k2.7-code-fireworks", "Kimi K2.7 Code");
 eq("kimi-k2.6-fireworks", "Kimi K2.6");
+eq("kimi-k3.1-pro", "Kimi K3.1 Pro");
 eq("minimax-m3", "MiniMax M3");
 eq("minimax-m2p7", "MiniMax M2.7");
 eq("qwen3.7-plus-fireworks", "Qwen3.7 Plus");
