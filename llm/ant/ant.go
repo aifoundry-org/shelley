@@ -505,7 +505,10 @@ var (
 )
 
 // MarshalJSON preserves an explicit empty signature on unsigned thinking
-// blocks. Kimi accepts these; Claude filters them before serialization.
+// blocks (Kimi accepts these; Claude filters them before serialization) and
+// keeps "content": [] on tool_result blocks whose nested content was entirely
+// filtered out — both Anthropic and Kimi accept an empty array, but Kimi
+// rejects a tool_result with the content field omitted.
 func (c content) MarshalJSON() ([]byte, error) {
 	type wireContent content
 	if c.Type == "thinking" && c.Signature == "" {
@@ -513,6 +516,12 @@ func (c content) MarshalJSON() ([]byte, error) {
 			wireContent
 			Signature string `json:"signature"`
 		}{wireContent(c), ""})
+	}
+	if c.Type == "tool_result" && len(c.ToolResult) == 0 {
+		return json.Marshal(struct {
+			wireContent
+			ToolResult []content `json:"content"`
+		}{wireContent(c), []content{}})
 	}
 	return json.Marshal(wireContent(c))
 }
@@ -539,19 +548,27 @@ func nonNullRawMessage(m json.RawMessage) json.RawMessage {
 func fromLLMContent(c llm.Content) content {
 	var toolResult []content
 	if len(c.ToolResult) > 0 {
-		toolResult = make([]content, len(c.ToolResult))
-		for i, tr := range c.ToolResult {
+		toolResult = make([]content, 0, len(c.ToolResult))
+		for _, tr := range c.ToolResult {
 			// For image content inside a tool_result, we need to map it to "image" type
 			if tr.MediaType != "" && tr.MediaType == "image/jpeg" || tr.MediaType == "image/png" {
 				// Format as an image for Claude
-				toolResult[i] = content{
+				toolResult = append(toolResult, content{
 					Type: "image",
 					Source: json.RawMessage(fmt.Sprintf(`{"type":"base64","media_type":"%s","data":"%s"}`,
 						tr.MediaType, tr.Data)),
-				}
-			} else {
-				toolResult[i] = fromLLMContent(tr)
+				})
+				continue
 			}
+			// Skip empty text blocks inside a tool_result (e.g. a bash command
+			// that produced no output). Kimi's Anthropic-compatible endpoint
+			// rejects them ("text content is empty"), which would permanently
+			// wedge the conversation; same rationale as the top-level filter in
+			// fromLLMMessage. MarshalJSON keeps "content": [] when none survive.
+			if tr.Type == llm.ContentTypeText && tr.Text == "" && tr.MediaType == "" {
+				continue
+			}
+			toolResult = append(toolResult, fromLLMContent(tr))
 		}
 	}
 

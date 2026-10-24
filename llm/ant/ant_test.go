@@ -478,6 +478,39 @@ func TestFromLLMMessageSkipsEmptyTextBlocks(t *testing.T) {
 	}
 }
 
+func TestFromLLMMessageSkipsEmptyTextInToolResult(t *testing.T) {
+	// A tool result whose text is empty (e.g. a bash command that produced no
+	// output) must not serialize an empty nested text block: Kimi's
+	// Anthropic-compatible endpoint rejects it ("text content is empty"),
+	// permanently wedging the conversation on every subsequent turn. The
+	// tool_result block itself must survive with "content": [] — Kimi rejects
+	// a tool_result with the content field omitted.
+	msg := (&Service{}).fromLLMMessage(llm.Message{
+		Role: llm.MessageRoleUser,
+		Content: []llm.Content{
+			{Type: llm.ContentTypeToolResult, ToolUseID: "tu_1", ToolResult: []llm.Content{{Type: llm.ContentTypeText, Text: "ok"}}},
+			{Type: llm.ContentTypeToolResult, ToolUseID: "tu_2", ToolResult: []llm.Content{{Type: llm.ContentTypeText, Text: ""}}},
+		},
+	})
+	if len(msg.Content) != 2 {
+		t.Fatalf("expected both tool_result blocks, got %d", len(msg.Content))
+	}
+	if n := len(msg.Content[0].ToolResult); n != 1 {
+		t.Errorf("tool_result tu_1 content blocks = %d, want 1", n)
+	}
+	if n := len(msg.Content[1].ToolResult); n != 0 {
+		t.Errorf("tool_result tu_2 content blocks = %d, want 0", n)
+	}
+	got, err := json.Marshal(msg.Content[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"tool_result","tool_use_id":"tu_2","content":[]}`
+	if string(got) != want {
+		t.Errorf("marshaled tool_result = %s, want %s", got, want)
+	}
+}
+
 func TestFromLLMRequestSkipsEmptyMessages(t *testing.T) {
 	s := &Service{Model: "claude-sonnet-4-6"}
 	req := s.fromLLMRequest(&llm.Request{
