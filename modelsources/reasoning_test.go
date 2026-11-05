@@ -149,7 +149,7 @@ func TestIntegrationUnspecifiedControlsUseCatalogBuild(t *testing.T) {
 	}, models.Model{
 		ID: "configured-responses", APIModelName: "unknown-configured-responses", Provider: models.ProviderOpenAI, APIType: models.APITypeOpenAIResponses,
 		Build: func(base, key string, httpc *http.Client) llm.Service {
-			return &oai.ResponsesService{Model: oai.Model{ModelName: "unknown-configured-responses"}, ModelURL: base + "/v1", APIKey: key, HTTPC: httpc, ReasoningEffort: "custom-effort", ThinkingLevel: llm.ThinkingLevelHigh, MaxTokens: 4321}
+			return &oai.ResponsesService{Model: oai.Model{ModelName: "unknown-configured-responses"}, ModelURL: base + "/v1", Auth: oai.APIKeyAuth{Key: key}, HTTPC: httpc, ReasoningEffort: "custom-effort", ThinkingLevel: llm.ThinkingLevelHigh, MaxTokens: 4321}
 		},
 	})
 	for _, entry := range catalog {

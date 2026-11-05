@@ -29,7 +29,7 @@ func TestResponsesDoReportsProgressPerEvent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := &ResponsesService{APIKey: "k", Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
+	svc := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: GPT41, ModelURL: server.URL, Backoff: []time.Duration{0}}
 	progress := 0
 	ctx := llm.WithProgress(t.Context(), func() { progress++ })
 	_, err := svc.Do(ctx, &llm.Request{

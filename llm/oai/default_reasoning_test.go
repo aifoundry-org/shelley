@@ -76,7 +76,7 @@ func TestDisableReasoningOverridesEndpointControls(t *testing.T) {
 				ThinkingLevel: llm.ThinkingLevelHigh, ReasoningEffort: "high",
 			},
 			&ResponsesService{
-				Model: modelForTest("test"), APIKey: "test", ModelURL: server.URL + "/v1",
+				Model: modelForTest("test"), Auth: APIKeyAuth{Key: "test"}, ModelURL: server.URL + "/v1",
 				DisableReasoning: true, ReasoningOverride: caps,
 				ThinkingLevel: llm.ThinkingLevelHigh, ReasoningEffort: "high",
 			},
