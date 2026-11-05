@@ -3412,3 +3412,52 @@ func TestFromLLMContentRepeatedToolInputNames(t *testing.T) {
 		t.Fatalf("tool input %s", got.ToolInput)
 	}
 }
+
+// rotatingTokens hands out the next token on each call, like a fleet follower
+// that picks up the owner's refreshed token between attempts.
+type rotatingTokens struct{ toks []string }
+
+func (r *rotatingTokens) AccessToken(context.Context) (string, error) {
+	t := r.toks[0]
+	if len(r.toks) > 1 {
+		r.toks = r.toks[1:]
+	}
+	return t, nil
+}
+
+func TestDoRetriesUnauthorizedWithReloadedOAuthToken(t *testing.T) {
+	ok := mockSSEResponse("msg_ok", Claude46Sonnet, "Hello", 10, 5)
+	var seen []string
+	rt := &roundTripFunc{fn: func(r *http.Request) (*http.Response, error) {
+		auth := r.Header.Get("Authorization")
+		seen = append(seen, auth)
+		if auth != "Bearer fresh" {
+			return &http.Response{StatusCode: 401, Status: "401 Unauthorized", Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(ok)), Header: http.Header{"Content-Type": []string{"text/event-stream"}}}, nil
+	}}
+	req := &llm.Request{Messages: []llm.Message{{Role: llm.MessageRoleUser, Content: []llm.Content{{Type: llm.ContentTypeText, Text: "hi"}}}}}
+
+	s := &Service{Auth: OAuthAuth{Tokens: &rotatingTokens{toks: []string{"revoked", "fresh"}}}, HTTPC: &http.Client{Transport: rt}, Backoff: []time.Duration{time.Millisecond}}
+	if _, err := s.Do(t.Context(), req); err != nil {
+		t.Fatalf("Do() = %v, want success after reload", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("attempts = %v, want 2", seen)
+	}
+
+	seen = nil
+	s.Auth = OAuthAuth{Tokens: &rotatingTokens{toks: []string{"revoked"}}}
+	if _, err := s.Do(t.Context(), req); err == nil {
+		t.Fatal("Do() succeeded with permanently revoked token")
+	}
+	if len(seen) != 1+maxUnauthorizedRetries {
+		t.Fatalf("attempts = %d, want %d", len(seen), 1+maxUnauthorizedRetries)
+	}
+
+	seen = nil
+	s.Auth = APIKeyAuth{Key: "bad"}
+	if _, err := s.Do(t.Context(), req); err == nil || len(seen) != 1 {
+		t.Fatalf("API key 401: err=%v attempts=%d, want error after 1 attempt", err, len(seen))
+	}
+}
