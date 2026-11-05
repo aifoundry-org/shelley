@@ -3246,9 +3246,8 @@ func (s *Server) refreshModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 	s.notifyModelsChanged()
 	modelList := s.getModelList()
-	if err := s.hideDismissedUpgrades(r.Context(), modelList); err != nil {
-		s.internalError(w, "Failed to read dismissed upgrades", err)
-		return
+	if err := s.hideDismissedUpgrades(ctx, modelList); err != nil {
+		return nil, fmt.Errorf("read dismissed upgrades: %w", err)
 	}
 	markDefaultModel(modelList, s.effectiveDefaultModel(modelList))
 	return modelList, nil

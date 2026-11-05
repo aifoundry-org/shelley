@@ -77,6 +77,7 @@ func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing
 			}
 			refreshed := false
 			s := &Server{
+				db:          testDB(t),
 				llmManager:  mgr,
 				logger:      slog.Default(),
 				credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath,
@@ -223,7 +224,7 @@ func TestKimiSubscriptionDeviceLogin(t *testing.T) {
 				refreshed := false
 				s := &Server{
 					credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath, subscriptionSessions: map[string]subscriptionLoginSession{},
-					llmManager: mgr, logger: slog.Default(),
+					db: testDB(t), llmManager: mgr, logger: slog.Default(),
 					refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 						refreshed = true
 						return []models.Built{{ID: "new-built", Provider: models.ProviderBuiltIn, Service: predictable.NewService()}}, nil
