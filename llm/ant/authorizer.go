@@ -96,3 +96,17 @@ func (a KimiOAuthAuth) SetAuth(ctx context.Context, h http.Header) error {
 func (a KimiOAuthAuth) BetaHeaders() []string            { return nil }
 func (a KimiOAuthAuth) RequiresClaudeCodeIdentity() bool { return false }
 func (a KimiOAuthAuth) HasCredential() bool              { return a.Tokens != nil }
+
+// maxUnauthorizedRetries bounds how many 401s are retried for rotating
+// credentials before the request fails.
+const maxUnauthorizedRetries = 2
+
+// rotatesCredentials reports whether a's token can change between attempts
+// (OAuth), so a 401 may be cured by reloading it.
+func rotatesCredentials(a Authorizer) bool {
+	switch a.(type) {
+	case OAuthAuth, KimiOAuthAuth:
+		return true
+	}
+	return false
+}
