@@ -897,7 +897,7 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 	var lastErrStatus int     // HTTP status of the most recent attempt failure, 0 if none
 	var lastRequestErrorInfo llm.RequestErrorInfo
 	var retryAfter time.Duration // hint from upstream Retry-After header, reset each attempt
-	var token string // ChatGPTPlan only; otherwise s.Auth sets credentials per attempt
+	var token string             // ChatGPTPlan only; otherwise s.Auth sets credentials per attempt
 	if s.ChatGPTPlan != nil {
 		if token, err = s.ChatGPTPlan.Credentials.Token(ctx); err != nil {
 			return nil, newRequestError(err, false)
