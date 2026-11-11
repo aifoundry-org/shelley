@@ -72,7 +72,7 @@ data: [DONE]
 							t.Fatal(err)
 						}
 					default:
-						s := &ResponsesService{APIKey: "k", Model: GPT61Sol, ModelURL: server.URL, ProviderName: tc.provider, HTTPC: client}
+						s := &ResponsesService{Auth: APIKeyAuth{Key: "k"}, Model: GPT61Sol, ModelURL: server.URL, ProviderName: tc.provider, HTTPC: client}
 						if adapter == "prewarm" {
 							// Prewarm capability is OpenAI-only; routing uses the context provider.
 							s.ProviderName = "openai"
