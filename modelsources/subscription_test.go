@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"shelley.exe.dev/db"
 	"shelley.exe.dev/llm"
 	"shelley.exe.dev/llm/ant"
 	"shelley.exe.dev/llm/oai"
@@ -76,6 +77,20 @@ func TestSubscriptionOpenAIUsesOAuthAndCodexBackend(t *testing.T) {
 	}
 	if svc.ModelURL != oauth.OpenAICodexBaseURL {
 		t.Errorf("ModelURL = %q, want Codex backend %q", svc.ModelURL, oauth.OpenAICodexBaseURL)
+	}
+	if b.BaseURL != oauth.OpenAICodexBaseURL {
+		t.Errorf("BaseURL = %q, want Codex backend %q", b.BaseURL, oauth.OpenAICodexBaseURL)
+	}
+}
+
+func TestSubscriptionDoesNotProvideTranscription(t *testing.T) {
+	src := Subscription(nil, &oauth.TokenSource{Provider: "openai"}, nil)
+	if got := TranscriptionModels([]Source{src}); len(got) != 0 {
+		t.Fatalf("subscription advertised transcription without API credentials: %+v", got)
+	}
+	direct := Env("", "sk-test", "", "")
+	if got := TranscriptionModels([]Source{src, direct}); len(got) == 0 {
+		t.Fatal("subscription suppressed direct API transcription")
 	}
 }
 
@@ -145,6 +160,25 @@ func TestSubscriptionAllProvidersAndNone(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModelsHaveProviderSpecificSources(t *testing.T) {
+	bs := Build(models.All(), []Source{Subscription(&oauth.TokenSource{}, &oauth.TokenSource{}, &oauth.TokenSource{})}, &http.Client{}, nil)
+	for _, tc := range []struct {
+		id, source string
+	}{
+		{"claude-opus-4.8", "Claude subscription"},
+		{"gpt-5.3-codex", "ChatGPT (Codex) subscription"},
+		{"kimi-for-coding", "Kimi Code subscription"},
+		{"kimi-k3-fireworks", "Kimi Code subscription"},
+	} {
+		b := findBuilt(bs, tc.id)
+		if b == nil {
+			t.Errorf("%s missing", tc.id)
+		} else if b.Source != tc.source {
+			t.Errorf("%s source = %q, want %q", tc.id, b.Source, tc.source)
+		}
+	}
+}
+
 // Exercise the built subscription service over the actual endpoint URL, with a
 // fake transport: streaming, thinking/tool replay, and token changes between
 // requests must work without Claude-only headers or payload fields.
@@ -158,7 +192,7 @@ func TestSubscriptionKimiStreamingToolRoundTrip(t *testing.T) {
 		{"kimi-k3.1-pro", "k3.1-pro", 131072},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
-			store := &oauth.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+			store := subscriptionTestStore(t)
 			saveToken := func(token string) {
 				t.Helper()
 				if err := store.Save("kimi", oauth.Token{AccessToken: token, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
@@ -311,3 +345,16 @@ event: message_stop
 data: {"type":"message_stop"}
 
 `
+
+func subscriptionTestStore(t *testing.T) *oauth.DBStore {
+	t.Helper()
+	database, err := db.New(db.Config{DSN: filepath.Join(t.TempDir(), "shelley.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := database.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return &oauth.DBStore{DB: database}
+}

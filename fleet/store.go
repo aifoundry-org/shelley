@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"shelley.exe.dev/internal/sqlitefs"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -59,6 +61,9 @@ CREATE TABLE IF NOT EXISTS state (
 func OpenStore(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
+	}
+	if err := sqlitefs.Protect(path); err != nil {
+		return nil, fmt.Errorf("secure fleet database permissions: %w", err)
 	}
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {

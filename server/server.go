@@ -419,8 +419,8 @@ type Server struct {
 	requireHeader            string
 	mounts                   map[string]http.Handler // extra handlers by path prefix, see Mount
 	refreshBuiltModels       func(context.Context) ([]models.Built, error)
-	credentials              oauth.Credentials // subscription OAuth tokens; nil → on-disk store at credentialsPath
-	credentialsPath          string
+	credentials              oauth.Credentials // injected; nil disables subscription endpoints
+	legacyCredentialImport   *oauth.LegacyImport
 	subscriptionSessions     map[string]subscriptionLoginSession
 	subscriptionSessionsMu   sync.Mutex
 	conversationGroup        singleflight.Group[string, *ConversationManager]
@@ -645,10 +645,15 @@ func (s *Server) notifyModelsChanged() {
 }
 
 // SetCredentials configures the OAuth credential store used by subscription
-// login APIs; path is the on-disk location shown to the user.
-func (s *Server) SetCredentials(creds oauth.Credentials, path string) {
+// login APIs. No credential file is opened implicitly.
+func (s *Server) SetCredentials(creds oauth.Credentials) {
 	s.credentials = creds
-	s.credentialsPath = path
+}
+
+// SetLegacyCredentialImport enables an explicit, user-requested one-time import.
+// Leave unset for predictable-only and test instances.
+func (s *Server) SetLegacyCredentialImport(importer *oauth.LegacyImport) {
+	s.legacyCredentialImport = importer
 }
 
 // RegisterNotificationChannel adds a backend notification channel to the dispatcher.
@@ -773,6 +778,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// Subscription OAuth API
 	api.HandleFunc("GET /api/subscriptions", s.handleSubscriptions)
+	api.HandleFunc("POST /api/subscriptions/import-legacy", s.handleSubscriptionImportLegacy)
 	api.HandleFunc("POST /api/subscriptions/{provider}/logout", s.handleSubscriptionLogout)
 	api.HandleFunc("POST /api/subscriptions/{provider}/login/start", s.handleSubscriptionLoginStart)
 	api.HandleFunc("POST /api/subscriptions/{provider}/login/poll", s.handleSubscriptionLoginPoll)

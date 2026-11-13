@@ -90,6 +90,10 @@ func New(cfg Config) (*DB, error) {
 		}
 	}
 
+	if err := protectDatabaseFiles(cfg.DSN); err != nil {
+		return nil, fmt.Errorf("secure database permissions: %w", err)
+	}
+
 	// Create connection pool with 3 readers
 	dsn := cfg.DSN
 	if !strings.Contains(dsn, "?") {

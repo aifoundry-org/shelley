@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -45,7 +46,6 @@ type GlobalConfig struct {
 	DefaultModel          string
 	DisableLLMIntegration bool
 	DisableGateway        bool
-	CredentialsPath       string // OAuth credential store; defaults to oauth.DefaultCredentialsPath()
 }
 
 type shelleyConfig struct {
@@ -231,7 +231,7 @@ func runServe(global GlobalConfig, args []string) {
 		os.Exit(1)
 	}
 	defer fleetSvc.Close()
-	creds := credentials(global, logger)
+	creds := credentials(database, logger)
 	creds.Fleet = fleetSvc
 	fleetSvc.StatusExtra = creds.Status
 
@@ -269,7 +269,13 @@ func runServe(global GlobalConfig, args []string) {
 	if chatGPTPlans != nil {
 		svr.SetChatGPTPlans(chatGPTPlans, llmManager.(*models.Manager).RefreshChatGPTPlans)
 	}
-	svr.SetCredentials(creds, creds.Disk.Path)
+	if !global.PredictableOnly {
+		svr.SetCredentials(creds)
+		svr.SetLegacyCredentialImport(&oauth.LegacyImport{
+			Store: &oauth.DBStore{DB: database},
+			Path:  oauth.DefaultCredentialsPath(),
+		})
+	}
 	svr.Banner = *banner
 	svr.SocketActivated = *systemdActivation
 	svr.Mount("/api/fleet", fleetSvc.Handler())
@@ -278,7 +284,9 @@ func runServe(global GlobalConfig, args []string) {
 			logger.Error("Model refresh after fleet credential change", "error", err)
 		}
 	}
-	go creds.Run(context.Background())
+	if !global.PredictableOnly {
+		go creds.Run(context.Background())
+	}
 
 	// Load notification channels from DB.
 	svr.ReloadNotificationChannels()
@@ -631,7 +639,10 @@ func buildLLMConfig(global GlobalConfig, logger *slog.Logger, database *db.DB, c
 	if err != nil {
 		return nil, err
 	}
-	defaultModel, sources := buildLLMModelSources(context.Background(), global, config, logger, creds)
+	defaultModel, sources, err := buildLLMModelSources(context.Background(), global, config, logger, creds)
+	if err != nil {
+		return nil, err
+	}
 
 	httpc := llmhttp.NewClient(nil)
 	return &server.LLMConfig{
@@ -641,7 +652,10 @@ func buildLLMConfig(global GlobalConfig, logger *slog.Logger, database *db.DB, c
 		DB:                  database,
 		HTTPC:               httpc,
 		RefreshBuiltModels: func(ctx context.Context) ([]models.Built, error) {
-			_, sources := buildLLMModelSources(ctx, global, config, logger, creds)
+			_, sources, err := buildLLMModelSources(ctx, global, config, logger, creds)
+			if err != nil {
+				return nil, err
+			}
 			return modelsources.Build(models.All(), sources, httpc, logger), nil
 		},
 		Logger: logger,
@@ -666,7 +680,7 @@ func loadConfig(path string) (shelleyConfig, error) {
 	return config, nil
 }
 
-func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shelleyConfig, logger *slog.Logger, creds *cred.Manager) (string, []modelsources.Source) {
+func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shelleyConfig, logger *slog.Logger, creds *cred.Manager) (string, []modelsources.Source, error) {
 	defaultModel := global.DefaultModel
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 	openAIKey := os.Getenv("OPENAI_API_KEY")
@@ -679,10 +693,16 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shell
 	var sources []modelsources.Source
 
 	// 0. Subscription (OAuth). Highest priority: if the user has logged
-	// in with `shelley login`, provider models are served from their
+	// in through Connections, provider models are served from their
 	// subscription rather than via API keys/gateway.
-	if src, ok := subscriptionSource(creds, logger); ok {
-		sources = append(sources, src)
+	if !global.PredictableOnly {
+		src, ok, err := subscriptionSource(creds, logger)
+		if err != nil {
+			return "", nil, err
+		}
+		if ok {
+			sources = append(sources, src)
+		}
 	}
 
 	// 1. exe.dev LLM integrations.
@@ -734,7 +754,7 @@ func buildLLMModelSources(ctx context.Context, global GlobalConfig, config shell
 
 	// 4. Predictable always available.
 	sources = append(sources, modelsources.Predictable())
-	return defaultModel, sources
+	return defaultModel, sources, nil
 }
 
 func modelsCommandDefaultID(configured string, modelList []models.Built, predictableOnly bool) string {
@@ -754,32 +774,38 @@ func modelsCommandDefaultID(configured string, modelList []models.Built, predict
 	return ""
 }
 
-// credentials returns the OAuth credential manager over the on-disk store.
+// credentials returns the OAuth credential manager over the main database.
 // The caller attaches a fleet to share credentials across nodes.
-func credentials(global GlobalConfig, logger *slog.Logger) *cred.Manager {
-	path := global.CredentialsPath
-	if path == "" {
-		path = oauth.DefaultCredentialsPath()
+// No database means no subscriptions (e.g. `shelley models` without -db).
+func credentials(database *db.DB, logger *slog.Logger) *cred.Manager {
+	if database == nil {
+		return nil
 	}
-	return &cred.Manager{Disk: &oauth.Store{Path: path}, HTTPC: llmhttp.NewClient(nil), Logger: logger}
+	return &cred.Manager{Local: &oauth.DBStore{DB: database}, HTTPC: llmhttp.NewClient(nil), Logger: logger}
 }
 
 // subscriptionSource returns a Subscription model source if credentials are
 // available for any subscription provider (locally or via the fleet), else
 // ok=false.
-func subscriptionSource(creds *cred.Manager, logger *slog.Logger) (modelsources.Source, bool) {
+func subscriptionSource(creds *cred.Manager, logger *slog.Logger) (modelsources.Source, bool, error) {
+	if creds == nil {
+		return modelsources.Source{}, false, nil
+	}
 	ts := map[string]*oauth.TokenSource{}
 	for _, p := range cred.Providers {
 		if _, err := creds.Load(p); err != nil {
-			continue
+			if errors.Is(err, oauth.ErrNoCredentials) {
+				continue
+			}
+			return modelsources.Source{}, false, fmt.Errorf("load %s subscription credentials: %w", p, err)
 		}
 		ts[p] = creds.TokenSource(p)
 		logger.Info("Using subscription credentials", "provider", p, "fleet", creds.Describe(p))
 	}
 	if len(ts) == 0 {
-		return modelsources.Source{}, false
+		return modelsources.Source{}, false, nil
 	}
-	return modelsources.Subscription(ts["anthropic"], ts["openai"], ts["kimi"]), true
+	return modelsources.Subscription(ts["anthropic"], ts["openai"], ts["kimi"]), true, nil
 }
 
 // runModels prints the materialized list of models the server would expose,
@@ -793,7 +819,7 @@ func runModels(global GlobalConfig, args []string) {
 		fmt.Fprintf(fs.Output(), "Usage: shelley [global-flags] models\n\n")
 		fmt.Fprintf(fs.Output(), "Prints the built-in models Shelley would expose with the current\n")
 		fmt.Fprintf(fs.Output(), "configuration (--config, env vars), without starting the server.\n")
-		fmt.Fprintf(fs.Output(), "With -db, also lists the custom models stored in that database.\n")
+		fmt.Fprintf(fs.Output(), "With -db, also lists local subscription and custom models from that database.\n")
 	}
 	fs.Parse(args)
 	if fs.NArg() > 0 {
@@ -802,7 +828,12 @@ func runModels(global GlobalConfig, args []string) {
 	}
 
 	logger := setupLogging(global.Debug)
-	llmCfg, err := buildLLMConfig(global, logger, nil, credentials(global, logger))
+	var database *db.DB
+	if global.DBPathSet {
+		database = setupDatabase(global.DBPath, logger)
+		defer database.Close()
+	}
+	llmCfg, err := buildLLMConfig(global, logger, database, credentials(database, logger))
 	if err != nil {
 		logger.Error("Failed to load config", "path", global.ConfigPath, "error", err)
 		os.Exit(1)
@@ -812,8 +843,6 @@ func runModels(global GlobalConfig, args []string) {
 
 	var custom []generated.Model
 	if global.DBPathSet {
-		database := setupDatabase(global.DBPath, logger)
-		defer database.Close()
 		custom, err = database.GetModels(context.Background())
 		if err != nil {
 			logger.Error("Failed to read custom models", "path", global.DBPath, "error", err)

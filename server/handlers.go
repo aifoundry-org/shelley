@@ -4710,8 +4710,8 @@ type subscriptionProviderStatus struct {
 }
 
 type subscriptionsResponse struct {
-	CredentialsPath string                                `json:"credentials_path"`
-	Providers       map[string]subscriptionProviderStatus `json:"providers"`
+	LegacyImportAvailable bool                                  `json:"legacy_import_available"`
+	Providers             map[string]subscriptionProviderStatus `json:"providers"`
 }
 
 type subscriptionLoginSession struct {
@@ -4723,42 +4723,82 @@ type subscriptionLoginSession struct {
 	Claude     *oauth.AnthropicLoginFlow
 }
 
-func (s *Server) subscriptionStore() oauth.Credentials {
-	if s.credentials != nil {
-		return s.credentials
+func (s *Server) subscriptionStore(w http.ResponseWriter) oauth.Credentials {
+	if s.credentials == nil {
+		http.Error(w, "subscription credentials are not configured", http.StatusServiceUnavailable)
 	}
-	return &oauth.Store{Path: s.subscriptionStorePath()}
-}
-
-func (s *Server) subscriptionStorePath() string {
-	if s.credentialsPath != "" {
-		return s.credentialsPath
-	}
-	return oauth.DefaultCredentialsPath()
+	return s.credentials
 }
 
 func validSubscriptionProvider(provider string) bool {
 	return provider == "anthropic" || provider == "openai" || provider == "kimi"
 }
 
+func (s *Server) handleSubscriptionImportLegacy(w http.ResponseWriter, r *http.Request) {
+	store := s.subscriptionStore(w)
+	if store == nil {
+		return
+	}
+	if s.legacyCredentialImport == nil {
+		http.Error(w, "legacy subscription import is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.legacyCredentialImport.Import(r.Context()); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, oauth.ErrLegacyClaimed) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if reconciler, ok := store.(interface{ ReconcileLocal(context.Context) error }); ok {
+		if err := reconciler.ReconcileLocal(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if _, err := s.refreshModels(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
-	store := s.subscriptionStore()
+	store := s.subscriptionStore(w)
+	if store == nil {
+		return
+	}
 	now := time.Now()
 	resp := subscriptionsResponse{
-		CredentialsPath: s.subscriptionStorePath(),
-		Providers:       map[string]subscriptionProviderStatus{},
+		Providers: map[string]subscriptionProviderStatus{},
+	}
+	if s.legacyCredentialImport != nil {
+		available, err := s.legacyCredentialImport.Available(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp.LegacyImportAvailable = available
 	}
 	describer, _ := store.(interface {
 		Describe(provider string) string
 		Owner(provider string) string
 	})
 	for _, provider := range []string{"anthropic", "openai", "kimi"} {
-		st := subscriptionProviderStatus{Status: oauth.Status(store, provider, now)}
-		if tok, err := store.Load(provider); err == nil {
+		st := subscriptionProviderStatus{Status: "not logged in"}
+		tok, err := store.Load(provider)
+		switch {
+		case err == nil:
 			st.LoggedIn = true
+			st.Status = tok.Status(now)
 			st.ExpiresAt = tok.ExpiresAt.Format(time.RFC3339)
-		} else {
+		case errors.Is(err, oauth.ErrNoCredentials):
 			st.Fallback = s.providerFallbackSource(provider)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		if describer != nil {
 			st.Fleet = describer.Describe(provider)
@@ -4793,7 +4833,11 @@ func (s *Server) handleSubscriptionLogout(w http.ResponseWriter, r *http.Request
 		http.Error(w, "unsupported provider", http.StatusBadRequest)
 		return
 	}
-	if err := s.subscriptionStore().Delete(provider); err != nil {
+	store := s.subscriptionStore(w)
+	if store == nil {
+		return
+	}
+	if err := store.Delete(provider); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -4811,7 +4855,10 @@ func (s *Server) handleSubscriptionLoginStart(w http.ResponseWriter, r *http.Req
 		http.Error(w, "unsupported provider", http.StatusBadRequest)
 		return
 	}
-	store := s.subscriptionStore()
+	store := s.subscriptionStore(w)
+	if store == nil {
+		return
+	}
 	sessionID := randomSessionID()
 	sess := subscriptionLoginSession{Provider: provider}
 	resp := map[string]string{"session_id": sessionID}

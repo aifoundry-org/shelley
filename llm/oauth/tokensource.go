@@ -12,8 +12,8 @@ import (
 // refresh slightly early rather than racing the deadline.
 const refreshSkew = 60 * time.Second
 
-// refreshFunc mints a new token from a refresh token. Injected for testing.
-type refreshFunc func(ctx context.Context, refreshToken string) (Token, error)
+// refreshFunc mints a new token from the exact stored snapshot. Injected for testing.
+type refreshFunc func(ctx context.Context, tok Token) (Token, error)
 
 // TokenSource returns a valid access token, refreshing and persisting it when
 // the stored token is near expiry. It is safe for concurrent use.
@@ -36,8 +36,8 @@ func NewAnthropicTokenSource(store Credentials, httpc *http.Client) *TokenSource
 	return &TokenSource{
 		Provider: "anthropic",
 		Store:    store,
-		refresh: func(ctx context.Context, rt string) (Token, error) {
-			return anthropicRefresh(ctx, httpc, anthropicTokenEP, rt)
+		refresh: func(ctx context.Context, tok Token) (Token, error) {
+			return anthropicRefresh(ctx, httpc, anthropicTokenEP, tok.RefreshToken)
 		},
 	}
 }
@@ -51,26 +51,21 @@ func NewOpenAITokenSource(store Credentials, httpc *http.Client) *TokenSource {
 	return &TokenSource{
 		Provider: "openai",
 		Store:    store,
-		refresh: func(ctx context.Context, rt string) (Token, error) {
-			prior, _ := store.Load("openai")
-			return openAIRefresh(ctx, httpc, openAITokenEP, rt, prior.AccountID)
+		refresh: func(ctx context.Context, tok Token) (Token, error) {
+			return openAIRefresh(ctx, httpc, openAITokenEP, tok.RefreshToken, tok.AccountID)
 		},
 	}
 }
 
-// AccountID returns the stored ChatGPT account id (OpenAI subscription only).
-func (s *TokenSource) AccountID() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tok, err := s.Store.Load(s.Provider)
-	if err != nil {
-		return "", err
-	}
-	return tok.AccountID, nil
-}
-
 // AccessToken returns a currently-valid access token, refreshing if needed.
 func (s *TokenSource) AccessToken(ctx context.Context) (string, error) {
+	accessToken, _, err := s.AccessTokenWithAccount(ctx)
+	return accessToken, err
+}
+
+// AccessTokenWithAccount returns a valid access token and its account id from
+// one credential snapshot, refreshing if needed.
+func (s *TokenSource) AccessTokenWithAccount(ctx context.Context) (accessToken, accountID string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -81,16 +76,16 @@ func (s *TokenSource) AccessToken(ctx context.Context) (string, error) {
 
 	tok, err := s.Store.Load(s.Provider)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !tok.Expired(now(), refreshSkew) {
-		return tok.AccessToken, nil
+		return tok.AccessToken, tok.AccountID, nil
 	}
 	refreshed, err := s.refreshLocked(ctx, tok)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return refreshed.AccessToken, nil
+	return refreshed.AccessToken, refreshed.AccountID, nil
 }
 
 // Refresh mints and persists a new token now, regardless of expiry.
@@ -109,11 +104,11 @@ func (s *TokenSource) refreshLocked(ctx context.Context, tok Token) (Token, erro
 	if tok.RefreshToken == "" {
 		return Token{}, fmt.Errorf("%s token expired and no refresh token available; re-run login", s.Provider)
 	}
-	refreshed, err := s.refresh(ctx, tok.RefreshToken)
+	refreshed, err := s.refresh(ctx, tok)
 	if err != nil {
 		return Token{}, fmt.Errorf("refresh %s token: %w", s.Provider, err)
 	}
-	if err := s.Store.Save(s.Provider, refreshed); err != nil {
+	if err := s.Store.SaveRefreshed(s.Provider, tok, refreshed); err != nil {
 		return Token{}, fmt.Errorf("persist refreshed %s token: %w", s.Provider, err)
 	}
 	return refreshed, nil

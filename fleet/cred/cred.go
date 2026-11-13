@@ -13,9 +13,11 @@ package cred
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,12 +52,21 @@ type Fleet interface {
 	SetMeta(key, value string) error
 }
 
+type credentialNode interface {
+	ID() string
+	Ready() <-chan struct{}
+	Get(context.Context, string) (fleet.Entry, bool, error)
+	List(context.Context, string) ([]fleet.Entry, error)
+	Put(context.Context, string, any) error
+	Delete(context.Context, string) error
+}
+
 // Manager implements oauth.Credentials: the on-disk store when this node owns
 // the credential (or is not in a fleet), the fleet-published token otherwise.
-// Fleet may be nil, in which case Manager is a plain pass-through to Disk.
+// Fleet may be nil, in which case Manager is a plain pass-through to Local.
 type Manager struct {
 	Fleet  Fleet
-	Disk   *oauth.Store
+	Local  oauth.Credentials
 	HTTPC  *http.Client
 	Logger *slog.Logger
 	// OnChange is called when the set of providers with usable credentials
@@ -65,6 +76,16 @@ type Manager struct {
 	mu      sync.Mutex
 	sources map[string]*oauth.TokenSource
 	sig     string
+	// Serialize local mutations and publication, so logout cannot be followed
+	// by a stale reconciliation publishing its pre-logout snapshot.
+	reconcileMu sync.Mutex
+	// A login whose publication failed still claims ownership on retry.
+	// Protected by reconcileMu; refreshes never create claims. This intent is
+	// in memory only: after restarting, a failed login must be retried to claim
+	// ownership from another node.
+	pendingClaims map[string]bool
+	// Optional node lookup for fault-injection tests.
+	getNode func() (credentialNode, error)
 }
 
 var _ oauth.Credentials = (*Manager)(nil)
@@ -99,42 +120,97 @@ func (m *Manager) TokenSource(provider string) *oauth.TokenSource {
 // Load returns the credential to use: the fleet-published token if another
 // node owns it, else whatever is on disk.
 func (m *Manager) Load(provider string) (oauth.Token, error) {
-	if n, best, _ := m.best(context.Background(), provider); best != nil && best.owner != n.ID() {
+	n, best, _, err := m.best(context.Background(), provider)
+	if err != nil {
+		return oauth.Token{}, err
+	}
+	if best != nil && best.owner != n.ID() {
 		return best.token(), nil
 	}
-	return m.Disk.Load(provider)
+	return m.Local.Load(provider)
 }
 
-// Save persists a token (from login or refresh) and publishes it if this
-// node owns, or now claims, the credential.
+// Save persists a new login and claims fleet ownership. TokenSource refreshes
+// must use SaveRefreshed instead.
 func (m *Manager) Save(provider string, tok oauth.Token) error {
-	if err := m.Disk.Save(provider, tok); err != nil {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if err := m.Local.Save(provider, tok); err != nil {
 		return err
 	}
-	m.reconcile(context.Background(), provider, true)
+	if err := m.reconcileLocked(context.Background(), provider, true); err != nil {
+		return fmt.Errorf("saved %s credentials locally, but fleet publication failed (retry login after a restart): %w", provider, err)
+	}
+	return nil
+}
+
+// SaveRefreshed persists only if the original login is still current. Refresh
+// never seizes ownership from another fleet node.
+func (m *Manager) SaveRefreshed(provider string, previous, refreshed oauth.Token) error {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if err := m.Local.SaveRefreshed(provider, previous, refreshed); err != nil {
+		return err
+	}
+	if err := m.reconcileLocked(context.Background(), provider, false); err != nil {
+		return fmt.Errorf("saved refreshed %s credentials locally, but fleet reconciliation failed: %w", provider, err)
+	}
 	return nil
 }
 
 // Delete logs out locally and retracts this node's published entry.
 func (m *Manager) Delete(provider string) error {
-	if err := m.Disk.Delete(provider); err != nil {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if err := m.Local.Delete(provider); err != nil {
 		return err
 	}
-	m.reconcile(context.Background(), provider, false)
+	delete(m.pendingClaims, provider)
+	if err := m.reconcileLocked(context.Background(), provider, false); err != nil {
+		return fmt.Errorf("deleted %s credentials locally, but fleet retraction failed: %w", provider, err)
+	}
+	return nil
+}
+
+// ReconcileLocal discovers imported local logins without treating them as new
+// fleet ownership claims. Existing owners retain their epoch and token family.
+// Errors report partial success: locally imported credentials are never undone.
+func (m *Manager) ReconcileLocal(ctx context.Context) error {
+	defer m.checkChanged()
+	if m.Fleet == nil {
+		return nil
+	}
+	n, err := m.node()
+	if errors.Is(err, fleet.ErrNotJoined) {
+		return nil
+	}
+	if err == nil {
+		select {
+		case <-n.Ready():
+			for _, p := range Providers {
+				err = errors.Join(err, m.reconcile(ctx, p, false))
+			}
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("local credentials retained, but fleet reconciliation failed: %w", err)
+	}
 	return nil
 }
 
 // Owner returns the name of the other fleet node whose login this node is
 // using for provider, or "" if this node owns it or no one does.
 func (m *Manager) Owner(provider string) string {
-	n, best, _ := m.best(context.Background(), provider)
+	n, best, _, _ := m.best(context.Background(), provider)
 	if n == nil || best == nil || best.owner == n.ID() {
 		return ""
 	}
 	return m.nodeName(n, best.owner)
 }
 
-func (m *Manager) nodeName(n *fleet.Node, id string) string {
+func (m *Manager) nodeName(n credentialNode, id string) string {
 	if e, ok, _ := n.Get(context.Background(), "node/"+id); ok {
 		var info fleet.NodeInfo
 		if json.Unmarshal(e.Value, &info) == nil {
@@ -158,7 +234,7 @@ type CredentialStatus struct {
 func (m *Manager) Status() map[string]any {
 	creds := map[string]*CredentialStatus{}
 	for _, p := range Providers {
-		n, best, _ := m.best(context.Background(), p)
+		n, best, _, _ := m.best(context.Background(), p)
 		if n == nil || best == nil {
 			creds[p] = nil
 			continue
@@ -173,7 +249,7 @@ func (m *Manager) Status() map[string]any {
 
 // Describe reports this node's role for provider, or "" outside a fleet.
 func (m *Manager) Describe(provider string) string {
-	n, best, _ := m.best(context.Background(), provider)
+	n, best, _, _ := m.best(context.Background(), provider)
 	if n == nil || best == nil {
 		return ""
 	}
@@ -201,17 +277,22 @@ func (m *Manager) Run(ctx context.Context) {
 	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {
-		n, err := m.Fleet.Node()
+		n, err := m.node()
 		if err == nil {
 			select {
 			case <-n.Ready(): // don't claim before hearing the fleet's state
 				for _, p := range Providers {
-					m.reconcile(ctx, p, false)
+					if err := m.reconcile(ctx, p, false); err != nil {
+						m.Logger.Error("fleet cred reconcile", "provider", p, "error", err)
+						continue
+					}
 					m.refreshIfDue(ctx, p)
 				}
 			case <-ctx.Done():
 				return
 			}
+		} else if !errors.Is(err, fleet.ErrNotJoined) {
+			m.Logger.Error("fleet cred node", "error", err)
 		}
 		m.checkChanged()
 		select {
@@ -223,7 +304,11 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) refreshIfDue(ctx context.Context, provider string) {
-	n, best, _ := m.best(ctx, provider)
+	n, best, _, err := m.best(ctx, provider)
+	if err != nil {
+		m.Logger.Error("fleet cred refresh ownership", "provider", provider, "error", err)
+		return
+	}
 	if best == nil || best.owner != n.ID() {
 		return
 	}
@@ -247,72 +332,119 @@ func (m *Manager) refreshIfDue(ctx context.Context, provider string) {
 //     away or logs out.
 //   - otherwise publish: a claim takes maxSeenEpoch+1; a refresh keeps the
 //     epoch and just updates the access token.
-func (m *Manager) reconcile(ctx context.Context, provider string, claim bool) {
-	n, best, mine := m.best(ctx, provider)
+func (m *Manager) reconcile(ctx context.Context, provider string, claim bool) error {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	return m.reconcileLocked(ctx, provider, claim || m.pendingClaims[provider])
+}
+
+func (m *Manager) reconcileLocked(ctx context.Context, provider string, claim bool) error {
+	if claim {
+		if m.pendingClaims == nil {
+			m.pendingClaims = make(map[string]bool)
+		}
+		m.pendingClaims[provider] = true
+	}
+	n, best, mine, err := m.best(ctx, provider)
+	if err != nil {
+		return err
+	}
 	if n == nil {
-		return
+		delete(m.pendingClaims, provider)
+		return nil
 	}
 	me := n.ID()
 	key := "cred/" + provider + "/" + me
-	local, err := m.Disk.Load(provider)
-	if err != nil || local.RefreshToken == "" {
+	local, err := m.Local.Load(provider)
+	if err != nil && !errors.Is(err, oauth.ErrNoCredentials) {
+		return fmt.Errorf("load local %s credentials: %w", provider, err)
+	}
+	if errors.Is(err, oauth.ErrNoCredentials) || local.RefreshToken == "" {
 		if mine != nil {
-			n.Delete(ctx, key)
+			if err := n.Delete(ctx, key); err != nil {
+				return fmt.Errorf("retract %s credentials: %w", provider, err)
+			}
 			m.Logger.Info("fleet cred retracted", "provider", provider)
 		}
-		return
+		delete(m.pendingClaims, provider)
+		return nil
 	}
-	maxSeen := m.metaInt(provider, "maxepoch")
+	maxSeen, err := m.metaInt(provider, "maxepoch")
+	if err != nil {
+		return err
+	}
 	if best != nil && best.Epoch > maxSeen {
 		maxSeen = best.Epoch
-		m.setMeta(provider, "maxepoch", fmt.Sprint(maxSeen))
+		if err := m.setMeta(provider, "maxepoch", fmt.Sprint(maxSeen)); err != nil {
+			return err
+		}
 	}
 	if best != nil && best.owner != me && !claim {
 		if mine != nil {
-			n.Delete(ctx, key)
+			if err := n.Delete(ctx, key); err != nil {
+				return fmt.Errorf("yield %s credentials: %w", provider, err)
+			}
 			m.Logger.Info("fleet cred yielded, now following", "provider", provider, "owner", best.owner, "epoch", best.Epoch)
 		}
-		return
+		return nil
 	}
 	epoch := maxSeen + 1
 	owned := mine != nil && (best == nil || best.owner == me)
 	if owned {
-		if mine.AccessToken == local.AccessToken {
-			return
+		if mine.AccessToken == local.AccessToken && mine.ExpiresAt.Equal(local.ExpiresAt) && mine.AccountID == local.AccountID {
+			delete(m.pendingClaims, provider)
+			return nil
 		}
 		epoch = mine.Epoch
 	}
 	e := entry{Epoch: epoch, AccessToken: local.AccessToken, ExpiresAt: local.ExpiresAt, AccountID: local.AccountID, Published: time.Now().UTC()}
 	if err := n.Put(ctx, key, e); err != nil {
-		m.Logger.Error("fleet cred publish", "provider", provider, "error", err)
-		return
+		return fmt.Errorf("publish %s credentials: %w", provider, err)
 	}
+	// Publication completes the login claim even if remembering its epoch
+	// fails. Retrying that claim could otherwise steal from a later login.
+	delete(m.pendingClaims, provider)
 	if !owned {
-		m.setMeta(provider, "maxepoch", fmt.Sprint(epoch))
+		if err := m.setMeta(provider, "maxepoch", fmt.Sprint(epoch)); err != nil {
+			return err
+		}
 		m.Logger.Info("fleet cred claimed", "provider", provider, "epoch", epoch)
 	}
+	return nil
+}
+
+func (m *Manager) node() (credentialNode, error) {
+	if m.getNode != nil {
+		return m.getNode()
+	}
+	return m.Fleet.Node()
 }
 
 // best returns the running node (nil if not in a fleet), the highest-epoch
-// entry for provider, and this node's own entry.
-func (m *Manager) best(ctx context.Context, provider string) (n *fleet.Node, best, mine *entry) {
+// entry for provider, and this node's own entry. Only ErrNotJoined is absence;
+// other node/list errors must not allow using a local refresh family.
+func (m *Manager) best(ctx context.Context, provider string) (n credentialNode, best, mine *entry, err error) {
 	if m.Fleet == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	n, err := m.Fleet.Node()
+	n, err = m.node()
+	if errors.Is(err, fleet.ErrNotJoined) {
+		return nil, nil, nil, nil
+	}
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("fleet credential node: %w", err)
 	}
 	prefix := "cred/" + provider + "/"
 	entries, err := n.List(ctx, prefix)
 	if err != nil {
-		m.Logger.Error("fleet cred list", "provider", provider, "error", err)
-		return n, nil, nil
+		return n, nil, nil, fmt.Errorf("list fleet %s credentials: %w", provider, err)
 	}
 	for _, kv := range entries {
 		var e entry
 		if json.Unmarshal(kv.Value, &e) != nil {
-			continue
+			// Decoder errors may contain token material. A corrupt record
+			// might be the current owner, so neither ignore it nor log it.
+			return n, nil, nil, fmt.Errorf("invalid fleet %s credential record", provider)
 		}
 		e.owner = strings.TrimPrefix(kv.Key, prefix)
 		if e.owner == n.ID() {
@@ -322,7 +454,7 @@ func (m *Manager) best(ctx context.Context, provider string) (n *fleet.Node, bes
 			best = &e
 		}
 	}
-	return n, best, mine
+	return n, best, mine, nil
 }
 
 // checkChanged fires OnChange when the set of providers Load succeeds for
@@ -344,18 +476,26 @@ func (m *Manager) checkChanged() {
 	}
 }
 
-func (m *Manager) setMeta(provider, k, v string) {
+func (m *Manager) setMeta(provider, k, v string) error {
 	if err := m.Fleet.SetMeta(metaKey(provider, k), v); err != nil {
-		m.Logger.Error("fleet cred meta", "error", err)
+		return fmt.Errorf("write fleet credential epoch: %w", err)
 	}
+	return nil
 }
 
-func (m *Manager) metaInt(provider, k string) int {
-	var v int
-	if s, _ := m.Fleet.Meta(metaKey(provider, k)); s != "" {
-		fmt.Sscan(s, &v)
+func (m *Manager) metaInt(provider, k string) (int, error) {
+	s, err := m.Fleet.Meta(metaKey(provider, k))
+	if err != nil {
+		return 0, fmt.Errorf("read fleet credential epoch: %w", err)
 	}
-	return v
+	if s == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 0 {
+		return 0, errors.New("invalid fleet credential epoch")
+	}
+	return v, nil
 }
 
 func metaKey(provider, k string) string { return "cred/" + provider + "/" + k }

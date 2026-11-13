@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,9 @@ import (
 	"time"
 
 	"shelley.exe.dev/claudetool"
+	"shelley.exe.dev/db"
 	"shelley.exe.dev/exeenv"
+	"shelley.exe.dev/fleet/cred"
 	"shelley.exe.dev/llm"
 	"shelley.exe.dev/llm/oauth"
 	"shelley.exe.dev/models"
@@ -127,7 +130,7 @@ func TestBuildLLMConfigSkipsGatewayWhenReflectionFoundLLMIntegration(t *testing.
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, logger, nil, credentials(GlobalConfig{ConfigPath: configPath}, logger))
+	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, logger, nil, credentials(nil, logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +184,7 @@ func TestBuildLLMConfigDoesNotOverrideMetadataEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(GlobalConfig{ConfigPath: configPath}, slog.Default()))
+	cfg, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(nil, slog.Default()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +270,7 @@ func TestBuildLLMConfigDefaultModelPrecedence(t *testing.T) {
 	}
 
 	// Flag unset (the VM case): shelley.json's default_model wins.
-	cfg, err := buildLLMConfig(parseGlobal(t, "serve"), logger, nil, credentials(parseGlobal(t, "serve"), logger))
+	cfg, err := buildLLMConfig(parseGlobal(t, "serve"), logger, nil, credentials(nil, logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +279,7 @@ func TestBuildLLMConfigDefaultModelPrecedence(t *testing.T) {
 	}
 
 	// Flag explicitly set: it overrides shelley.json.
-	cfg, err = buildLLMConfig(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger, nil, credentials(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger))
+	cfg, err = buildLLMConfig(parseGlobal(t, "-default-model", "claude-opus-5", "serve"), logger, nil, credentials(nil, logger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +328,7 @@ func TestBuildLLMConfigIgnoresInvalidLegacyExeEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(GlobalConfig{ConfigPath: configPath}, slog.Default()))
+	_, err := buildLLMConfig(GlobalConfig{ConfigPath: configPath}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, credentials(nil, slog.Default()))
 	if err != nil {
 		t.Fatalf("legacy exe_environment should be ignored: %v", err)
 	}
@@ -545,19 +548,21 @@ func TestBuildLLMModelSourcesPrependsSubscriptionWhenLoggedIn(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("FIREWORKS_API_KEY", "")
 
-	credPath := filepath.Join(t.TempDir(), "credentials.json")
-	store := &oauth.Store{Path: credPath}
+	store := testSubscriptionStore(t)
 	if err := store.Save("anthropic", oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger, credentials(GlobalConfig{CredentialsPath: credPath}, logger))
+	_, sources, err := buildLLMModelSources(context.Background(), GlobalConfig{}, shelleyConfig{}, logger, credentials(store.DB, logger))
+	if err != nil {
+		t.Fatal(err)
+	}
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
 	// Anthropic models must resolve to the subscription source (highest priority).
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude/ChatGPT/Kimi subscription" {
-		t.Fatalf("claude-opus-4.8 source = %q, want Claude/ChatGPT/Kimi subscription", src)
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src != "Claude subscription" {
+		t.Fatalf("claude-opus-4.8 source = %q, want Claude subscription", src)
 	}
 }
 
@@ -592,15 +597,18 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 		t.Setenv(env, "")
 	}
 
-	global := GlobalConfig{CredentialsPath: filepath.Join(t.TempDir(), "credentials.json")}
-	store := &oauth.Store{Path: global.CredentialsPath}
+	global := GlobalConfig{}
+	store := testSubscriptionStore(t)
 	for _, provider := range []string{"anthropic", "openai"} {
 		if err := store.Save(provider, oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), global, shelleyConfig{}, logger, credentials(global, logger))
+	_, sources, err := buildLLMModelSources(context.Background(), global, shelleyConfig{}, logger, credentials(store.DB, logger))
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := models.NewManager(&models.Config{Models: modelsources.Build(models.All(), sources, &http.Client{}, logger)})
 	if err != nil {
 		t.Fatal(err)
@@ -609,11 +617,16 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 		t.Fatal("exe.dev ChatGPT route gpt-6-astra@llm-sub-oai was not built; the test no longer exercises duplicates")
 	}
 
-	const subscription = "Claude/ChatGPT/Kimi subscription"
+	subscriptionFor := func(id string) string {
+		if strings.HasPrefix(id, "claude-") {
+			return "Claude subscription"
+		}
+		return "ChatGPT (Codex) subscription"
+	}
 	toolModels := setupToolSetConfig(nil, manager)
 	for _, parent := range []string{"claude-opus-5.5", "gpt-6-astra"} {
-		if src := manager.GetModelInfo(parent).Source; src != subscription {
-			t.Fatalf("parent %s source = %q, want %q", parent, src, subscription)
+		if src := manager.GetModelInfo(parent).Source; src != subscriptionFor(parent) {
+			t.Fatalf("parent %s source = %q, want %q", parent, src, subscriptionFor(parent))
 		}
 		routes := map[string]string{}
 		for _, m := range toolModels.BuildAvailableModels(parent) {
@@ -624,7 +637,7 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 			if !ok {
 				t.Fatalf("parent %s: %s missing from tool models %v", parent, name, routes)
 			}
-			if src := manager.GetModelInfo(id).Source; src != subscription {
+			if src := manager.GetModelInfo(id).Source; src != subscriptionFor(name) {
 				t.Errorf("parent %s: %s routes to %s (source %q), want the local subscription", parent, name, id, src)
 			}
 		}
@@ -643,12 +656,15 @@ func TestBuildLLMModelSourcesNoSubscriptionWhenLoggedOut(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("FIREWORKS_API_KEY", "")
 
-	credPath := filepath.Join(t.TempDir(), "credentials.json") // no file written
+	store := testSubscriptionStore(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, sources := buildLLMModelSources(context.Background(), GlobalConfig{CredentialsPath: credPath}, shelleyConfig{}, logger, credentials(GlobalConfig{CredentialsPath: credPath}, logger))
+	_, sources, err := buildLLMModelSources(context.Background(), GlobalConfig{}, shelleyConfig{}, logger, credentials(store.DB, logger))
+	if err != nil {
+		t.Fatal(err)
+	}
 	built := modelsources.Build(models.All(), sources, &http.Client{}, logger)
 
-	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude/ChatGPT/Kimi subscription" {
+	if src := findBuiltModelSource(built, "claude-opus-4.8"); src == "Claude subscription" {
 		t.Fatal("subscription source present despite no stored credentials")
 	}
 }
@@ -1008,17 +1024,20 @@ func TestToolModelsStayWithinSavedAccount(t *testing.T) {
 }
 
 func TestSubscriptionSourceKimi(t *testing.T) {
-	credPath := filepath.Join(t.TempDir(), "credentials.json")
-	store := &oauth.Store{Path: credPath}
+	store := testSubscriptionStore(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	global := GlobalConfig{CredentialsPath: credPath}
-	if _, ok := subscriptionSource(credentials(global, logger), logger); ok {
+	if _, ok, err := subscriptionSource(credentials(store.DB, logger), logger); err != nil {
+		t.Fatal(err)
+	} else if ok {
 		t.Fatal("subscription source exists before login")
 	}
 	if err := store.Save("kimi", oauth.Token{AccessToken: "kimi-test", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	source, ok := subscriptionSource(credentials(global, logger), logger)
+	source, ok, err := subscriptionSource(credentials(store.DB, logger), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("Kimi credentials did not enable subscription source")
 	}
@@ -1037,7 +1056,75 @@ func TestSubscriptionSourceKimi(t *testing.T) {
 	if err := store.Delete("kimi"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := subscriptionSource(credentials(global, logger), logger); ok {
+	if _, ok, err := subscriptionSource(credentials(store.DB, logger), logger); err != nil {
+		t.Fatal(err)
+	} else if ok {
 		t.Fatal("subscription source still exists after logout")
 	}
 }
+
+func testSubscriptionStore(t *testing.T) *oauth.DBStore {
+	t.Helper()
+	database, err := db.New(db.Config{DSN: filepath.Join(t.TempDir(), "shelley.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := database.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return &oauth.DBStore{DB: database}
+}
+
+func TestBuildLLMCredentialErrorsNeverSelectPaidFallback(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	store := testSubscriptionStore(t)
+	configPath := filepath.Join(t.TempDir(), "shelley.json")
+	if err := os.WriteFile(configPath, []byte(`{"llm_gateway":"https://gateway.example"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	global := GlobalConfig{ConfigPath: configPath, DisableLLMIntegration: true}
+	manager := credentials(store.DB, logger)
+	// A genuine absence still permits the configured gateway.
+	cfg, err := buildLLMConfig(global, logger, store.DB, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source := findBuiltModelSource(cfg.Models, "claude-opus-4.8"); source != "exe.dev gateway" {
+		t.Fatalf("missing credential source=%q, want configured gateway", source)
+	}
+	if err := store.Save("anthropic", oauth.Token{AccessToken: "test-access", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = buildLLMConfig(global, logger, store.DB, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source := findBuiltModelSource(cfg.Models, "claude-opus-4.8"); source != "Claude subscription" {
+		t.Fatalf("logged-in credential source=%q", source)
+	}
+	if err := store.DB.SaveSubscriptionCredential(context.Background(), "anthropic", `{"expires_at":"secret-invalid-token"}`); err != nil {
+		t.Fatal(err)
+	}
+	if built, err := cfg.RefreshBuiltModels(context.Background()); err == nil || len(built) != 0 || strings.Contains(err.Error(), "secret-invalid-token") {
+		t.Fatal("refresh did not surface credential corruption safely")
+	}
+	if source := findBuiltModelSource(cfg.Models, "claude-opus-4.8"); source != "Claude subscription" {
+		t.Fatal("failed refresh switched the existing subscription route")
+	}
+	if broken, err := buildLLMConfig(global, logger, store.DB, manager); err == nil || broken != nil {
+		t.Fatal("startup selected a paid route after credential corruption")
+	}
+	storageError := errors.New("subscription database read failed")
+	manager = &cred.Manager{Local: brokenCredentialStore{Credentials: store, err: storageError}, Logger: logger}
+	if _, sources, err := buildLLMModelSources(context.Background(), global, shelleyConfig{LLMGateway: "https://paid.example"}, logger, manager); !errors.Is(err, storageError) || len(sources) != 0 {
+		t.Fatal("database read error silently switched to a paid source", err)
+	}
+}
+
+type brokenCredentialStore struct {
+	oauth.Credentials
+	err error
+}
+
+func (s brokenCredentialStore) Load(string) (oauth.Token, error) { return oauth.Token{}, s.err }

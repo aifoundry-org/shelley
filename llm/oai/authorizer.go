@@ -39,10 +39,9 @@ func (a APIKeyAuth) HasCredential() bool         { return a.Key != "" }
 const codexIdentity = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer."
 
 // TokenProvider yields a currently-valid OAuth access token and the ChatGPT
-// account id, refreshing as needed. Implemented by oauth.TokenSource.
+// account id from one snapshot, refreshing as needed. Implemented by oauth.TokenSource.
 type TokenProvider interface {
-	AccessToken(ctx context.Context) (string, error)
-	AccountID() (string, error)
+	AccessTokenWithAccount(ctx context.Context) (accessToken, accountID string, err error)
 }
 
 // OAuthAuth authenticates with a ChatGPT subscription via an OAuth bearer
@@ -54,17 +53,15 @@ type OAuthAuth struct {
 var _ Authorizer = OAuthAuth{}
 
 func (a OAuthAuth) SetAuth(ctx context.Context, h http.Header) error {
-	tok, err := a.Tokens.AccessToken(ctx)
+	tok, accountID, err := a.Tokens.AccessTokenWithAccount(ctx)
 	if err != nil {
 		return err
 	}
 	h.Set("Authorization", "Bearer "+tok)
-	accountID, err := a.Tokens.AccountID()
-	if err != nil {
-		return err
-	}
 	if accountID != "" {
 		h.Set("Chatgpt-Account-Id", accountID)
+	} else {
+		h.Del("Chatgpt-Account-Id")
 	}
 	return nil
 }
