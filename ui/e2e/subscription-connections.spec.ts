@@ -1,19 +1,26 @@
 import { test, expect, type Page } from "@playwright/test";
-import { openModelPicker } from "./helpers";
+import { createConversationViaAPIWithDetails, openModelPicker } from "./helpers";
 import type {
   AvailableModel,
   ChatGPTAccount,
   SubscriptionProvider,
   SubscriptionsStatus,
 } from "../src/services/api";
+import type { Message } from "../src/types";
 
-const labels: Record<SubscriptionProvider, string> = {
+const sources: Record<SubscriptionProvider, string> = {
   anthropic: "Claude subscription",
   openai: "ChatGPT (Codex) subscription",
   kimi: "Kimi Code subscription",
 };
 
-async function fixture(page: Page) {
+const labels: Record<SubscriptionProvider, string> = {
+  anthropic: "Claude",
+  openai: "Codex",
+  kimi: "Kimi",
+};
+
+async function fixture(page: Page, extraModels: AvailableModel[] = []) {
   const state = {
     status: {
       legacy_import_available: false,
@@ -25,6 +32,7 @@ async function fixture(page: Page) {
     } as SubscriptionsStatus,
     models: [
       { id: "fixture-model", display_name: "Gateway model", source: "Gateway", ready: true },
+      ...extraModels,
     ] as AvailableModel[],
     providers: [] as Array<{
       provider_id: string;
@@ -78,7 +86,7 @@ async function fixture(page: Page) {
       id: `${provider}-model`,
       display_name: `${provider} model`,
       ready: true,
-      source: labels[provider],
+      source: sources[provider],
       base_url: "https://misleading-api.example.test/v1",
     });
   };
@@ -108,7 +116,7 @@ async function fixture(page: Page) {
     }
     if (path.endsWith("/logout")) {
       state.status.providers[provider] = { logged_in: false, status: "Not logged in" };
-      state.models = state.models.filter((m) => m.source !== labels[provider]);
+      state.models = state.models.filter((m) => m.source !== sources[provider]);
       return state.logoutError
         ? route.fulfill({ status: 502, body: "sign-out refresh failed" })
         : route.fulfill({ json: { status: "ok" } });
@@ -183,6 +191,181 @@ async function choose(page: Page, provider: SubscriptionProvider) {
   return page.getByRole("dialog", { name: "Add Models", exact: true });
 }
 
+for (const width of [320, 393, 640, 1024, 1440]) {
+  test(`connection tiles have short accessible names and fit at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await fixture(page);
+    await manage(page);
+    const form = await choose(page, "openai");
+    const choices = form.locator(".connection-provider-buttons");
+    await expect(choices.getByRole("button")).toHaveCount(8);
+    for (const provider of ["anthropic", "openai", "kimi"] as const) {
+      const button = choices.getByRole("button", { name: labels[provider], exact: true });
+      await expect(button).toHaveText(labels[provider]);
+      await expect(button).toHaveAttribute("data-testid", `provider-subscription-${provider}`);
+      const icon = button.locator(`svg[data-subscription-icon="${provider}"]`);
+      await expect(icon).toBeVisible();
+      await expect(icon).toHaveAttribute("aria-hidden", "true");
+      await expect(icon).toHaveAttribute("focusable", "false");
+    }
+    await expect(choices.getByRole("button", { name: "ChatGPT", exact: true })).toHaveAttribute(
+      "data-testid",
+      "provider-chatgpt",
+    );
+    await expect(form).toContainText("not the official Sign in with ChatGPT");
+    await expect(choices.getByRole("button", { name: "Codex", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(choices.getByRole("button", { name: "ChatGPT", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    // Check actual geometry, not merely visibility: clipped controls still
+    // satisfy toBeVisible(). Every button and its text must fit the row/form.
+    expect(
+      await choices.evaluate((row) => {
+        const bounds = row.getBoundingClientRect();
+        const form = row.closest("form")!;
+        const dialog = row.closest('[role="dialog"]')!;
+        const buttons = [...row.querySelectorAll("button")];
+        return (
+          [row, form, dialog, document.documentElement].every(
+            (element) => element.scrollWidth <= element.clientWidth + 1,
+          ) &&
+          buttons.every((button) => {
+            const box = button.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(button.querySelector("span") || button);
+            const text = range.getBoundingClientRect();
+            return (
+              box.left >= bounds.left - 1 &&
+              box.right <= bounds.right + 1 &&
+              text.left >= box.left &&
+              text.right <= box.right &&
+              button.scrollWidth <= button.clientWidth + 1
+            );
+          }) &&
+          (window.innerWidth > 393 ||
+            new Set(buttons.map((button) => button.getBoundingClientRect().top)).size > 1)
+        );
+      }),
+    ).toBe(true);
+  });
+}
+
+test("subscription source labels stay short without relabeling saved providers or SIWC", async ({
+  page,
+}) => {
+  // Mobile's full model trigger displays the selected source badge. The
+  // desktop status hook intentionally hides badges when it replaces the label.
+  await page.setViewportSize({ width: 393, height: 900 });
+  const models = (["anthropic", "openai", "kimi"] as const).flatMap((provider) => [
+    {
+      id: `${provider}-model`,
+      display_name: `Subscription ${provider}`,
+      source: sources[provider],
+      ready: true,
+    },
+    {
+      id: `provider:${provider}:model`,
+      display_name: `Saved ${provider}`,
+      source: sources[provider],
+      source_id: `saved-${provider}`,
+      ready: true,
+    },
+    {
+      id: `chatgpt:${provider}:model`,
+      display_name: `Official ${provider}`,
+      source: sources[provider],
+      source_id: `chatgpt:${provider}`,
+      mode: "chatgpt-plan" as const,
+      ready: true,
+    },
+  ]);
+  const state = await fixture(page, models);
+  for (const provider of ["anthropic", "openai", "kimi"] as const) {
+    state.status.providers[provider] = { logged_in: true, status: "Logged in" };
+    state.providers.push({
+      provider_id: `saved-${provider}`,
+      provider_type: "anthropic",
+      display_name: sources[provider],
+      endpoint: "https://api.example.test/v1",
+      has_api_key: true,
+      model_count: 1,
+    });
+    state.officialAccounts.push({
+      id: provider,
+      label: sources[provider],
+      signed_in: true,
+      plan_usage: true,
+    });
+  }
+  await page.goto("/new");
+  const picker = await openModelPicker(page);
+  const options = page.locator(".model-picker-panel .model-picker-option");
+  for (const provider of ["anthropic", "openai", "kimi"] as const) {
+    const subscription = options.filter({
+      has: page.locator(".model-picker-option-name", { hasText: `Subscription ${provider}` }),
+    });
+    await expect(subscription.locator(".model-picker-option-source")).toHaveText(labels[provider]);
+    await subscription.click();
+    await expect(picker.locator(".model-picker-custom-badge")).toHaveText(labels[provider]);
+    for (const prefix of ["Saved", "Official"]) {
+      const collision = options.filter({
+        has: page.locator(".model-picker-option-name", { hasText: `${prefix} ${provider}` }),
+      });
+      await expect(collision.locator(".model-picker-option-source")).toContainText(
+        sources[provider],
+      );
+      await collision.click();
+      await expect(picker.locator(".model-picker-custom-badge")).toHaveCount(0);
+    }
+  }
+  await page
+    .locator(".model-picker-panel")
+    .getByRole("button", { name: "Manage Models", exact: true })
+    .click();
+  for (const provider of ["anthropic", "openai", "kimi"] as const) {
+    const account = page.getByTestId(`subscription-account-${provider}`);
+    await expect(account).toHaveCount(1);
+    await expect(account.locator(".models-group-name")).toHaveText(labels[provider]);
+    await expect(account).toContainText("(1)");
+    await expect(page.getByTestId(`edit-provider-saved-${provider}`)).toBeVisible();
+    await expect(page.getByTestId(`remove-provider-saved-${provider}`)).toBeVisible();
+    await expect(page.getByTestId(`chatgpt-account-${provider}`)).toContainText(sources[provider]);
+  }
+});
+
+for (const provider of ["anthropic", "openai", "kimi"] as const) {
+  test(`${labels[provider]} generation badges show the short subscription name`, async ({
+    page,
+    request,
+  }) => {
+    const model = `${provider}-model`;
+    await fixture(page, [{ id: model, source: sources[provider], ready: true }]);
+    const { conversationId, slug } = await createConversationViaAPIWithDetails(
+      request,
+      "echo: subscription badge",
+    );
+    const response = await request.get(`/api/conversation/${conversationId}`);
+    expect(response.ok()).toBeTruthy();
+    const body = await response.json();
+    for (const message of body.messages as Message[]) {
+      if (message.usage_data) {
+        message.usage_data = JSON.stringify({ ...JSON.parse(message.usage_data), model });
+      }
+    }
+    await page.route("**/api/stream2*", (route) => route.abort());
+    await page.route(`**/api/conversation/${conversationId}`, (route) =>
+      route.fulfill({ json: body }),
+    );
+    await page.goto(`/c/${slug}`);
+    await expect(page.locator(".model-bar-custom-badge").first()).toHaveText(labels[provider]);
+    await expect(page.locator(".model-bar")).not.toContainText(sources[provider]);
+  });
+}
+
 for (const provider of ["anthropic", "openai", "kimi"] as const) {
   test(`${labels[provider]} connects through Add Models and signs out`, async ({ page }) => {
     const state = await fixture(page);
@@ -219,7 +402,10 @@ for (const provider of ["anthropic", "openai", "kimi"] as const) {
     await page.getByTestId("complete-subscription-sign-in").click();
     await expect(form).not.toBeVisible();
     const account = page.getByTestId(`subscription-account-${provider}`);
-    await expect(account).toContainText(labels[provider]);
+    await expect(account.locator(".models-group-name")).toHaveText(labels[provider]);
+    await expect(account.locator(`[data-subscription-icon="${provider}"]`)).toBeVisible();
+    await expect(account).toHaveCount(1);
+    await expect(account).toContainText("(1)");
     await expect(account).toContainText("Fleet: owner (epoch 2)");
     await expect(page.locator(".models-modal")).not.toContainText("misleading-api.example.test");
     expect(state.starts).toEqual([provider]);
@@ -245,6 +431,8 @@ test("fleet follower with no local login takes over even when no models are avai
   };
   await manage(page);
   const account = page.getByTestId("subscription-account-openai");
+  await expect(account.locator(".models-group-name")).toHaveText("Codex");
+  await expect(account).toContainText("(0)");
   await expect(account).toContainText("no local sign-in required");
   await expect(account.getByRole("button", { name: "Sign out", exact: true })).toHaveCount(0);
   await account.getByRole("button", { name: "Take over", exact: true }).click();

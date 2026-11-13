@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { api, type SubscriptionLoginStart, type SubscriptionsStatus } from "../../services/api";
 import { en } from "../../i18n/en";
-import { subscriptionForSource, useSubscriptionConnections } from "./subscriptionConnections";
+import {
+  subscriptionForSource,
+  subscriptionProviders,
+  subscriptionSourceLabel,
+  useSubscriptionConnections,
+} from "./subscriptionConnections";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -278,11 +283,23 @@ try {
   assert.equal(changed, 1);
   assert.equal(signedIn, 0);
 
-  assert.equal(
-    subscriptionForSource("Claude subscription", "saved-provider"),
-    undefined,
-    "saved provider labels cannot impersonate subscription routes",
+  assert.deepEqual(
+    subscriptionProviders.map(({ source, label }) => [source, label]),
+    [
+      ["Claude subscription", "Claude"],
+      ["ChatGPT (Codex) subscription", "Codex"],
+      ["Kimi Code subscription", "Kimi"],
+    ],
   );
+  for (const { id, source, label } of subscriptionProviders) {
+    assert.equal(subscriptionForSource(source), id);
+    assert.equal(subscriptionSourceLabel(source), label);
+    assert.equal(subscriptionForSource(label), undefined, "display names are not source keys");
+    for (const sourceID of ["saved-provider", "chatgpt:official"]) {
+      assert.equal(subscriptionForSource(source, sourceID), undefined);
+      assert.equal(subscriptionSourceLabel(source, sourceID), source);
+    }
+  }
   assert.equal(subscriptionForSource("ChatGPT"), undefined, "official ChatGPT is never Codex");
   assert.equal(subscriptionForSource("ChatGPT (Codex) subscription"), "openai");
   console.log("subscriptionConnections: all flow, race, fleet, import and error assertions passed");

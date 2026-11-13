@@ -1,6 +1,7 @@
 <template>
   <div class="subscription-account" :data-testid="`subscription-account-${provider}`">
     <div class="models-provider-line">
+      <SubscriptionIcon :provider="provider" :size="16" />
       <span class="models-group-name">{{
         subscriptionProviders.find((p) => p.id === provider)!.label
       }}</span>
@@ -51,6 +52,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Button from "primevue/button";
+import SubscriptionIcon from "./SubscriptionIcon.vue";
 import { useI18n } from "../composables/i18n";
 import {
   subscriptionProviders,
