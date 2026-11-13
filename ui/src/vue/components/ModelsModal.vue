@@ -14,7 +14,7 @@
     :is-open="mode !== null"
     :title="t('manageModels')"
     class-name="modal-xwide"
-    @close="emit('close')"
+    @close="closeModels"
   >
     <template #title-right>
       <div class="models-header-actions">
@@ -35,8 +35,30 @@
         :listed="listedPlanAccounts"
         :hide-message="formOpen"
         @models-changed="handleChatGPTChanged"
-        @signed-in="formOpen = false"
+        @signed-in="handleChatGPTSignedIn"
       />
+      <div v-if="subscriptions.status?.legacy_import_available" class="subscription-import">
+        <p class="form-hint">{{ t("subscriptionImportHint") }}</p>
+        <Button
+          size="small"
+          severity="secondary"
+          :disabled="subscriptions.busy"
+          :label="t(subscriptions.busy ? 'subscriptionImporting' : 'subscriptionImport')"
+          data-testid="import-legacy-subscriptions"
+          @click="subscriptions.importLegacy()"
+        />
+      </div>
+      <div v-if="subscriptions.loading" class="form-hint" role="status">{{ t("loading") }}</div>
+      <div v-if="subscriptions.error && !formOpen" class="models-error" role="alert">
+        {{ subscriptions.error }}
+        <Button
+          size="small"
+          severity="secondary"
+          text
+          :label="t('retry')"
+          @click="subscriptions.load()"
+        />
+      </div>
       <div v-if="error" class="models-error">
         {{ error }}
         <button class="models-error-dismiss" @click="error = null">×</button>
@@ -73,9 +95,22 @@
         :pt="{ rowGroupHeaderCell: { colspan: 5 } }"
       >
         <template #groupheader="{ data }">
-          <div v-if="data.provider" class="models-provider-group" data-testid="provider-connection">
+          <SubscriptionAccount
+            v-if="subscriptionGroup(data)"
+            :provider="subscriptionGroup(data)!"
+            :connections="subscriptions"
+            :count="groupCounts[data.groupKey] || 0"
+            @connect="connectSubscription"
+          />
+          <div
+            v-else-if="data.provider"
+            class="models-provider-group"
+            data-testid="provider-connection"
+          >
             <div class="models-provider-line">
-              <span class="models-group-name">{{ data.provider ? providerName(data.provider) : data.groupLabel }}</span>
+              <span class="models-group-name">{{
+                data.provider ? providerName(data.provider) : data.groupLabel
+              }}</span>
               <span
                 v-if="providerSuffix(data.provider)"
                 class="models-group-endpoint"
@@ -158,7 +193,11 @@
             <ChatGPTLogo :size="14" />
             <span class="models-group-name">{{ data.groupLabel }}</span>
             <span class="models-group-count">({{ groupCounts[data.groupKey] }})</span>
-            <a class="models-plan-link" :href="CHATGPT_USAGE_URL" target="_blank" rel="noopener noreferrer"
+            <a
+              class="models-plan-link"
+              :href="CHATGPT_USAGE_URL"
+              target="_blank"
+              rel="noopener noreferrer"
               >{{ t("chatgptManageUsage") }} ↗</a
             >
             <span class="models-provider-actions">
@@ -196,7 +235,9 @@
         </Column>
         <Column :header="t('columnProvider')" field="apiShape">
           <template #body="{ data }">
-            <span :class="{ 'models-cell-muted': !data.apiShape }">{{ data.placeholder ? "" : data.apiShape || "—" }}</span>
+            <span :class="{ 'models-cell-muted': !data.apiShape }">{{
+              data.placeholder ? "" : data.apiShape || "—"
+            }}</span>
           </template>
         </Column>
         <Column :header="t('columnImages')" field="supportsImages" class="models-col-images">
@@ -280,10 +321,13 @@
 
   <!-- Stacked add/edit dialog, layered on top of the list. -->
   <ModelFormModal
+    ref="modelForm"
     :is-open="formOpen"
     :edit-model="editModel"
     :edit-provider="editingProvider"
     :existing-models="builtInModelsFiltered"
+    :subscriptions="subscriptions"
+    :subscription-provider="subscriptionProvider"
     :chatgpt="chatgptPanel?.enabled"
     :chatgpt-busy="chatgptPanel?.busy"
     :chatgpt-pending="chatgptPanel?.pending"
@@ -293,7 +337,7 @@
     @chatgpt-cancel="chatgptPanel?.cancel()"
     @saved="handleFormSaved"
     @provider-saved="handleProviderSaved"
-    @close="formOpen = false"
+    @close="closeForm"
   />
   <Modal
     :is-open="!!providerToRemove"
@@ -333,7 +377,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import Button from "primevue/button";
@@ -341,6 +385,13 @@ import Modal from "./Modal.vue";
 import ModelFormModal from "./ModelFormModal.vue";
 import ChatGPTPlanPanel from "./ChatGPTPlanPanel.vue";
 import ChatGPTLogo from "./ChatGPTLogo.vue";
+import SubscriptionAccount from "./SubscriptionAccount.vue";
+import {
+  subscriptionForSource,
+  subscriptionProviders,
+  useSubscriptionConnections,
+} from "../composables/subscriptionConnections";
+import type { SubscriptionProvider } from "../../services/api";
 import { CHATGPT_USAGE_URL } from "./chatgptPlan";
 import { modelsTableDt } from "./modelsTableDt";
 import { prettyModelLabels } from "../../utils/modelNames";
@@ -361,6 +412,23 @@ const props = defineProps<{ mode: "manage" | "add" | null }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "modelsChanged"): void }>();
 
 const { t } = useI18n();
+const subscriptions = useSubscriptionConnections(t, handleChatGPTChanged, () => {
+  formOpen.value = false;
+});
+const subscriptionProvider = ref<SubscriptionProvider | null>(null);
+function closeForm() {
+  subscriptions.cancel();
+  formOpen.value = false;
+}
+function closeModels() {
+  closeForm();
+  emit("close");
+}
+function connectSubscription(provider: SubscriptionProvider) {
+  handleAddNew();
+  subscriptionProvider.value = provider;
+}
+onBeforeUnmount(subscriptions.cancel);
 
 const models = ref<CustomModel[]>([]);
 const loading = ref(true);
@@ -388,7 +456,11 @@ const builtInModelsFiltered = computed(() =>
 // The list fills the modal edge-to-edge, so we drop the wrapper padding in that
 // state (see .models-modal-list).
 const hasAnyEntries = computed(
-  () => builtInModelsFiltered.value.length > 0 || models.value.length > 0 || providerConnections.value.length > 0,
+  () =>
+    builtInModelsFiltered.value.length > 0 ||
+    models.value.length > 0 ||
+    providerConnections.value.length > 0 ||
+    subscriptionProviders.some((p) => subscriptions.connected(p.id)),
 );
 const showList = computed(() => !loading.value && hasAnyEntries.value);
 const providerSuffixes = computed(() => {
@@ -436,6 +508,10 @@ interface TableRow {
   wireId: string;
 }
 
+function subscriptionGroup(row: TableRow): SubscriptionProvider | undefined {
+  return row.groupKey.startsWith("builtin:") ? subscriptionForSource(row.groupLabel) : undefined;
+}
+
 const tableRows = computed<TableRow[]>(() => {
   const labels = prettyModelLabels(builtInModelsFiltered.value);
   const providersByID = new Map(
@@ -457,6 +533,12 @@ const tableRows = computed<TableRow[]>(() => {
     }
     groups.get(key)!.models.push(m);
   }
+  // Keep fleet followers and connected accounts visible even without models.
+  for (const p of subscriptionProviders) {
+    if (subscriptions.connected(p.id) && !groups.has(`builtin:${p.label}`)) {
+      groups.set(`builtin:${p.label}`, { label: p.label, models: [] });
+    }
+  }
   // Signed-in ChatGPT plans lead, as in the model picker.
   const isPlan = ([, g]: [string, { models: AvailableModel[] }]) =>
     Number(g.models[0]?.mode === "chatgpt-plan");
@@ -464,20 +546,32 @@ const tableRows = computed<TableRow[]>(() => {
   const rows: TableRow[] = [];
   for (const [groupKey, { label, models: group }] of ordered) {
     const provider = groupKey.startsWith("provider:")
-      ? providersByID.get(groupKey.slice("provider:".length)) ?? null
+      ? (providersByID.get(groupKey.slice("provider:".length)) ?? null)
       : null;
-    if (provider && group.length === 0) {
+    if (group.length === 0) {
       rows.push({
-        key: `${groupKey}:empty`, groupKey, groupLabel: label, groupEndpoint: "",
-        name: "", modelId: "", wireId: "", apiShape: null, endpoint: "",
-        supportsImages: false, imageTitle: "", imageAuto: false, model: null,
-        provider, placeholder: true,
+        key: `${groupKey}:empty`,
+        groupKey,
+        groupLabel: label,
+        groupEndpoint: "",
+        name: "",
+        modelId: "",
+        wireId: "",
+        apiShape: null,
+        endpoint: "",
+        supportsImages: false,
+        imageTitle: "",
+        imageAuto: false,
+        model: null,
+        provider,
+        placeholder: true,
       });
     }
     // Endpoint shared by every model in the group renders once in the group
     // header; otherwise it stays per-row.
+    const subscription = groupKey.startsWith("builtin:") && subscriptionForSource(label);
     const endpoints = new Set(group.map((m) => m.base_url || ""));
-    const common = endpoints.size === 1 ? (group[0].base_url ?? "") : "";
+    const common = !subscription && endpoints.size === 1 ? (group[0].base_url ?? "") : "";
     for (const m of group) {
       rows.push({
         key: `builtin:${m.id}`,
@@ -487,7 +581,7 @@ const tableRows = computed<TableRow[]>(() => {
         name: labels.get(m.id) || m.id,
         modelId: m.id,
         apiShape: (m.api_type && API_TYPE_LABELS[m.api_type]) || null,
-        endpoint: common ? "" : m.base_url || "",
+        endpoint: subscription || common ? "" : m.base_url || "",
         supportsImages: m.supports_images ?? true,
         imageTitle: (m.supports_images ?? true) ? t("imageSupportYes") : t("imageSupportNo"),
         imageAuto: false,
@@ -556,9 +650,17 @@ async function loadModels() {
     modelProvidersApi.list(),
   ]);
   if (customResult.status === "fulfilled") models.value = customResult.value;
-  else error.value = customResult.reason instanceof Error ? customResult.reason.message : String(customResult.reason);
+  else
+    error.value =
+      customResult.reason instanceof Error
+        ? customResult.reason.message
+        : String(customResult.reason);
   if (modelsResult.status === "fulfilled") setBuiltInFromModelList(modelsResult.value);
-  else if (!error.value) error.value = modelsResult.reason instanceof Error ? modelsResult.reason.message : String(modelsResult.reason);
+  else if (!error.value)
+    error.value =
+      modelsResult.reason instanceof Error
+        ? modelsResult.reason.message
+        : String(modelsResult.reason);
   providerLoadFailed.value = providersResult.status === "rejected";
   if (providersResult.status === "fulfilled") providerConnections.value = providersResult.value;
   loading.value = false;
@@ -569,6 +671,7 @@ function setBuiltInFromModelList(modelList: AvailableModel[]) {
 }
 
 function handleAddNew() {
+  subscriptionProvider.value = null;
   editingProvider.value = null;
   editModel.value = null;
   formOpen.value = true;
@@ -598,11 +701,12 @@ function openRemoveProvider(provider: ModelProviderConnection) {
 }
 
 function saveProviderLocally(provider: ModelProviderConnection) {
-  const index = providerConnections.value.findIndex((saved) => saved.provider_id === provider.provider_id);
+  const index = providerConnections.value.findIndex(
+    (saved) => saved.provider_id === provider.provider_id,
+  );
   if (index < 0) providerConnections.value.push(provider);
   else providerConnections.value[index] = provider;
 }
-
 
 async function refreshModelList() {
   try {
@@ -615,6 +719,10 @@ async function refreshModelList() {
 }
 
 const chatgptPanel = ref<InstanceType<typeof ChatGPTPlanPanel> | null>(null);
+const modelForm = ref<InstanceType<typeof ModelFormModal> | null>(null);
+function handleChatGPTSignedIn() {
+  if (modelForm.value?.usingChatGPT) formOpen.value = false;
+}
 
 // ChatGPT accounts whose plan models are listed show their status and
 // actions in their table group header; the panel shows the rest.
@@ -720,7 +828,7 @@ async function handleRefreshModels() {
   try {
     refreshing.value = true;
     error.value = null;
-    const refreshedModels = await api.refreshModels();
+    const [refreshedModels] = await Promise.all([api.refreshModels(), subscriptions.load()]);
     if (window.__SHELLEY_INIT__) {
       window.__SHELLEY_INIT__.models = refreshedModels;
     }
@@ -737,14 +845,24 @@ watch(
   () => props.mode,
   (mode) => {
     if (mode) {
+      subscriptions.load();
       if (mode === "add") handleAddNew();
       loadModels();
       const initData = window.__SHELLEY_INIT__;
       if (initData?.models) {
         setBuiltInFromModelList(initData.models);
       }
+    } else {
+      closeForm();
     }
   },
   { immediate: true },
 );
 </script>
+
+<style scoped>
+.subscription-import {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+</style>

@@ -173,7 +173,7 @@ export interface SubscriptionProviderStatus {
 }
 
 export interface SubscriptionsStatus {
-  credentials_path: string;
+  legacy_import_available: boolean;
   providers: Record<SubscriptionProvider, SubscriptionProviderStatus>;
 }
 
@@ -320,6 +320,14 @@ class ApiService {
 
   async getSubscriptions(): Promise<SubscriptionsStatus> {
     return apiJSON("/api/subscriptions", "Failed to get subscriptions");
+  }
+
+  async importLegacySubscriptions(): Promise<void> {
+    await apiFetch(
+      "/api/subscriptions/import-legacy",
+      "Failed to import subscriptions",
+      sendJSON("POST"),
+    );
   }
 
   async logoutSubscription(provider: SubscriptionProvider): Promise<void> {

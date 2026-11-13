@@ -143,7 +143,10 @@
           <span
             v-if="
               option.source &&
-              (option.source_id || option.source !== dominantSource || isCustom(option))
+              (option.source_id ||
+                option.source !== dominantSource ||
+                isCustom(option) ||
+                subscriptionForSource(option.source, option.source_id))
             "
             class="model-picker-option-source"
             :title="isCustom(option) ? endpointHost(option.base_url) : undefined"
@@ -408,6 +411,7 @@ import Select from "primevue/select";
 import { statusPickerDt } from "./statusPickerDt";
 import { prettyModelLabels } from "../../utils/modelNames";
 import { customModelBadge, endpointHost } from "../../utils/customModelBadge";
+import { subscriptionForSource } from "../composables/subscriptionConnections";
 import { accountSuffixes } from "../../utils/providerAccounts";
 import { THINKING_LEVELS, type ThinkingLevel } from "./thinkingLevel";
 import { useI18n } from "../composables/i18n";
@@ -650,9 +654,17 @@ const selectedLabel = computed(
 
 // A hook-supplied trigger label replaces the model label, so the badge would
 // describe a model the trigger is not showing.
-const selectedBadge = computed(() =>
-  props.triggerLabel ? null : customModelBadge(selectedModelObj.value),
-);
+const selectedBadge = computed(() => {
+  if (props.triggerLabel) return null;
+  const model = selectedModelObj.value;
+  if (model?.source && subscriptionForSource(model.source, model.source_id)) {
+    return {
+      label: model.source,
+      title: t("subscriptionOrigin").replace("{provider}", model.source),
+    };
+  }
+  return customModelBadge(model);
+});
 const isCustom = (m: Pick<Model, "source" | "source_id" | "base_url">) =>
   customModelBadge(m) !== null;
 const reasoningSupported = computed(() => selectedModelObj.value?.supports_reasoning !== false);

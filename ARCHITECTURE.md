@@ -87,10 +87,17 @@ Auth is pluggable via per-provider `Authorizer` interfaces:
   bearer key (default); `oai.OAuthAuth` is ChatGPT **subscription** auth — an
   OAuth bearer token plus the `chatgpt-account-id` header and the Codex identity
   instruction, pointed at the ChatGPT Codex backend URL.
+- Kimi Code uses a bearer token on the Anthropic-compatible Kimi coding endpoint.
 
 The OAuth flows (PKCE), token store, and refreshing token sources live in
-`llm/oauth`. Credentials are stored in `~/.config/shelley/credentials.json`
-(0600), keyed by provider.
+`llm/oauth`. Claude, Codex, and Kimi Code credentials live in the Shelley
+database, keyed by provider. Old `credentials.json` credentials can be imported
+explicitly from Manage Models, after stopping older Shelley instances using that
+file. The file is retained but will not receive subsequent token rotations, so
+rolling back to an older binary may require signing in again. Fleet owners keep
+the refresh token locally and publish access tokens to followers; importing does
+not take over fleet ownership. Upstream Sign in with ChatGPT remains a separate,
+database-backed connection.
 
 Model credentials are assembled in `modelsources/`. Sources are tried in
 priority order: **Subscription** (if logged in) → exe.dev LLM integration →

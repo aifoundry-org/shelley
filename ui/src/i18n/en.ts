@@ -1,6 +1,32 @@
 import type { TranslationKeys } from "./types";
 
 export const en: TranslationKeys = {
+  // Subscription connections
+  subscriptionConnectedAfterError: "The subscription is connected and this sign-in session has finished. Refresh models instead of resubmitting the code.",
+  subscriptionSignIn: "Sign in",
+  subscriptionSignOut: "Sign out",
+  subscriptionTakeOver: "Take over",
+  subscriptionLocal: "Local credentials",
+  subscriptionFleet: "Fleet: {role}",
+  subscriptionFollowing: "Using credentials from {owner}; no local sign-in required.",
+  subscriptionTakeOverHint: "Signing in here moves subscription ownership from {owner} to this node.",
+  subscriptionFallback: "Models are currently served by {source}, not this subscription.",
+  subscriptionUnofficial: "Unofficial subscription access is undocumented and may violate provider terms.",
+  subscriptionCodexNotice: "Unofficial Codex subscription access is undocumented and may violate provider terms. This is not the official Sign in with ChatGPT integration.",
+  subscriptionKimiNotice: "Kimi sign-in uses a third-party OAuth client integration.",
+  subscriptionOpenBrowser: "Open sign-in page ↗",
+  subscriptionWaiting: "Complete sign-in in your browser. If no tab opened, use this link:",
+  subscriptionPasteCode: "Paste the authorization code from Anthropic",
+  subscriptionDeviceCode: "Enter this code on the sign-in page:",
+  subscriptionApproved: "I approved it",
+  subscriptionComplete: "Complete sign-in",
+  subscriptionNotApproved: "Sign-in is not complete yet. Approve in the browser, then try again.",
+  subscriptionInvalidSession: "The provider returned an incomplete sign-in session. Cancel and try again.",
+  subscriptionImport: "Import existing subscription credentials",
+  subscriptionImportHint: "Stop older Shelley instances using the legacy credentials file before importing: they could refresh and rotate the same tokens. This is a one-time import into this Shelley database.",
+  subscriptionImporting: "Importing credentials…",
+  subscriptionOrigin: "Subscription: {provider}",
+
   // App-level
   loading: "Loading...",
   diskSpaceLow: "Disk space is low",
