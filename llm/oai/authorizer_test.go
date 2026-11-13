@@ -16,11 +16,8 @@ type fakeTokenProvider struct {
 	err       error
 }
 
-func (f fakeTokenProvider) AccessToken(context.Context) (string, error) {
-	return f.tok, f.err
-}
-func (f fakeTokenProvider) AccountID() (string, error) {
-	return f.accountID, f.err
+func (f fakeTokenProvider) AccessTokenWithAccount(context.Context) (string, string, error) {
+	return f.tok, f.accountID, f.err
 }
 
 func TestAPIKeyAuthSetsBearer(t *testing.T) {
@@ -62,7 +59,7 @@ func TestOAuthAuthSetsBearerAndAccountID(t *testing.T) {
 }
 
 func TestOAuthAuthOmitsAccountIDWhenEmpty(t *testing.T) {
-	h := http.Header{}
+	h := http.Header{"Chatgpt-Account-Id": {"previous-account"}}
 	auth := OAuthAuth{Tokens: fakeTokenProvider{tok: "t"}}
 	if err := auth.SetAuth(context.Background(), h); err != nil {
 		t.Fatalf("SetAuth: %v", err)
@@ -83,9 +80,53 @@ func TestOAuthAuthRequiresCodexIdentity(t *testing.T) {
 }
 
 func TestOAuthAuthPropagatesTokenError(t *testing.T) {
-	auth := OAuthAuth{Tokens: fakeTokenProvider{err: errors.New("boom")}}
-	if err := auth.SetAuth(context.Background(), http.Header{}); err == nil {
+	failure := errors.New("boom")
+	auth := OAuthAuth{Tokens: fakeTokenProvider{tok: "unusable", accountID: "unusable", err: failure}}
+	h := http.Header{}
+	if err := auth.SetAuth(context.Background(), h); !errors.Is(err, failure) {
 		t.Fatal("expected token error to propagate")
+	}
+	if len(h) != 0 {
+		t.Error("failed snapshot must not set authentication headers")
+	}
+}
+
+type rotatingSnapshotProvider struct {
+	calls int
+	ctx   context.Context
+}
+
+func (p *rotatingSnapshotProvider) AccessTokenWithAccount(ctx context.Context) (string, string, error) {
+	p.calls++
+	p.ctx = ctx
+	if p.calls == 1 {
+		return "token-a", "account-a", nil
+	}
+	return "token-b", "account-b", nil
+}
+
+func TestOAuthAuthUsesOneSnapshotPerAttempt(t *testing.T) {
+	tokens := &rotatingSnapshotProvider{}
+	auth := OAuthAuth{Tokens: tokens}
+	h := http.Header{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for i, want := range []struct{ token, account string }{
+		{"token-a", "account-a"},
+		{"token-b", "account-b"},
+	} {
+		if err := auth.SetAuth(ctx, h); err != nil {
+			t.Fatal(err)
+		}
+		if tokens.calls != i+1 {
+			t.Fatal("each request attempt must read exactly one credential snapshot")
+		}
+		if tokens.ctx != ctx {
+			t.Error("snapshot did not receive request context")
+		}
+		if h.Get("Authorization") != "Bearer "+want.token || h.Get("Chatgpt-Account-Id") != want.account {
+			t.Error("request combined bearer and account from different snapshots")
+		}
 	}
 }
 

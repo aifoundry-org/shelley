@@ -1,8 +1,7 @@
 package oauth
 
 import (
-	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,80 +27,16 @@ func DefaultCredentialsPath() string {
 	return filepath.Join(configDir, "shelley", "credentials.json")
 }
 
-// Credentials is where OAuth tokens live, keyed by provider name. Store is the
-// on-disk implementation; a fleet-aware one may serve tokens published by
-// another node.
+var ErrNoCredentials = errors.New("no subscription credentials")
+
+var ErrCredentialsChanged = errors.New("subscription credentials changed during refresh")
+
+// Credentials is where OAuth tokens live, keyed by provider name.
+// SaveRefreshed must atomically reject stale refresh results after logout or
+// another login, and must not claim fleet ownership.
 type Credentials interface {
 	Load(provider string) (Token, error)
 	Save(provider string, tok Token) error
 	Delete(provider string) error
-}
-
-// Store is an on-disk set of OAuth tokens keyed by provider name. The file is
-// a JSON object {provider: Token}, written with 0600 permissions.
-type Store struct {
-	Path string
-}
-
-func (s *Store) readAll() (map[string]Token, error) {
-	data, err := os.ReadFile(s.Path)
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]Token{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parse credentials %s: %w", s.Path, err)
-	}
-	return m, nil
-}
-
-func (s *Store) writeAll(m map[string]Token) error {
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.Path, data, 0o600)
-}
-
-// Load returns the token for provider, or an error if absent.
-func (s *Store) Load(provider string) (Token, error) {
-	m, err := s.readAll()
-	if err != nil {
-		return Token{}, err
-	}
-	tok, ok := m[provider]
-	if !ok {
-		return Token{}, fmt.Errorf("no %s credentials in %s", provider, s.Path)
-	}
-	return tok, nil
-}
-
-// Save writes the token for provider, preserving other providers' tokens.
-func (s *Store) Save(provider string, tok Token) error {
-	m, err := s.readAll()
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		m = map[string]Token{}
-	}
-	m[provider] = tok
-	return s.writeAll(m)
-}
-
-// Delete removes the token for provider, preserving others. It is a no-op if
-// the file or provider entry does not exist.
-func (s *Store) Delete(provider string) error {
-	m, err := s.readAll()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	delete(m, provider)
-	return s.writeAll(m)
+	SaveRefreshed(provider string, previous, refreshed Token) error
 }

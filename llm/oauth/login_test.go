@@ -59,15 +59,11 @@ func TestNewAnthropicLoginFlowHasPKCE(t *testing.T) {
 }
 
 func TestStatusReportsLoggedIn(t *testing.T) {
-	store := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
-	if Status(store, "anthropic", time.Now()) != "not logged in" {
-		t.Error("expected not logged in for empty store")
-	}
-	store.Save("anthropic", Token{AccessToken: "a", ExpiresAt: time.Unix(2000, 0)})
-	if got := Status(store, "anthropic", time.Unix(1000, 0)); !strings.Contains(got, "logged in") {
+	tok := Token{AccessToken: "a", ExpiresAt: time.Unix(2000, 0)}
+	if got := tok.Status(time.Unix(1000, 0)); !strings.Contains(got, "logged in") {
 		t.Errorf("Status = %q, want logged in", got)
 	}
-	if got := Status(store, "anthropic", time.Unix(3000, 0)); !strings.Contains(got, "expired") {
+	if got := tok.Status(time.Unix(3000, 0)); !strings.Contains(got, "expired") {
 		t.Errorf("Status = %q, want expired", got)
 	}
 }

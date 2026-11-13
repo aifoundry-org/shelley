@@ -278,9 +278,9 @@ func NewKimiTokenSource(store Credentials, httpc *http.Client) *TokenSource {
 	}
 	return &TokenSource{
 		Provider: "kimi", Store: store,
-		refresh: func(ctx context.Context, rt string) (Token, error) {
+		refresh: func(ctx context.Context, tok Token) (Token, error) {
 			data, status, err := kimiRequest(ctx, httpc, kimiTokenEP, url.Values{
-				"client_id": {kimiClientID}, "grant_type": {"refresh_token"}, "refresh_token": {rt},
+				"client_id": {kimiClientID}, "grant_type": {"refresh_token"}, "refresh_token": {tok.RefreshToken},
 			})
 			if err != nil {
 				return Token{}, err

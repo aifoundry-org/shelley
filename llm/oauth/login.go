@@ -113,12 +113,9 @@ func (f *OpenAILoginFlow) Complete(ctx context.Context, code string) error {
 	return f.Store.Save("openai", tok)
 }
 
-// Status returns a human-readable login status for provider given the store.
-func Status(store Credentials, provider string, now time.Time) string {
-	tok, err := store.Load(provider)
-	if err != nil {
-		return "not logged in"
-	}
+// Status describes an existing token; callers must distinguish missing
+// credentials from storage errors before calling it.
+func (tok Token) Status(now time.Time) string {
 	if tok.Expired(now, 0) {
 		return fmt.Sprintf("logged in but token expired at %s (will refresh on next use)", tok.ExpiresAt.Format(time.RFC3339))
 	}

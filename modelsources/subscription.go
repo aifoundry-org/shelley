@@ -29,7 +29,7 @@ func Subscription(anthropicTS, openAITS, kimiTS *oauth.TokenSource) Source {
 		providers[models.ProviderAnthropic] = &providerConn{}
 	}
 	if openAITS != nil {
-		providers[models.ProviderOpenAI] = &providerConn{}
+		providers[models.ProviderOpenAI] = &providerConn{baseURL: oauth.OpenAICodexBaseURL}
 	}
 	if kimiTS != nil {
 		providers[models.ProviderKimiCoding] = &providerConn{}
@@ -40,6 +40,11 @@ func Subscription(anthropicTS, openAITS, kimiTS *oauth.TokenSource) Source {
 		label:            "Claude/ChatGPT/Kimi subscription",
 		providers:        providers,
 		catalogOverrides: overrides,
+		providerLabels: map[models.Provider]string{
+			models.ProviderAnthropic:  "Claude subscription",
+			models.ProviderOpenAI:     "ChatGPT (Codex) subscription",
+			models.ProviderKimiCoding: "Kimi Code subscription",
+		},
 		buildService: func(m models.Model, _ *providerConn, httpc *http.Client) llm.Service {
 			return subscriptionService(m, anthropicTS, openAITS, kimiTS, httpc)
 		},

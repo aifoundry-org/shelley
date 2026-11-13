@@ -375,7 +375,7 @@ func TestKimiRequestsBounded(t *testing.T) {
 					wantDuration = 10 * time.Second
 					err = flow.Poll(context.Background(), &KimiDeviceAuth{deviceCode: "secret-device", interval: time.Second, ExpiresAt: start.Add(wantDuration)})
 				case "refresh":
-					_, err = NewKimiTokenSource(flow.Store, client).refresh(context.Background(), "secret-refresh")
+					_, err = NewKimiTokenSource(flow.Store, client).refresh(context.Background(), Token{RefreshToken: "secret-refresh"})
 				}
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("error = %v", err)
@@ -447,7 +447,7 @@ func TestKimiRequestCancellation(t *testing.T) {
 			case "poll":
 				err = flow.Poll(ctx, &KimiDeviceAuth{deviceCode: "secret-device", interval: time.Second, ExpiresAt: flow.now().Add(time.Minute)})
 			case "refresh":
-				_, err = NewKimiTokenSource(flow.Store, flow.HTTPC).refresh(ctx, "secret-refresh")
+				_, err = NewKimiTokenSource(flow.Store, flow.HTTPC).refresh(ctx, Token{RefreshToken: "secret-refresh"})
 			}
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("error = %v", err)

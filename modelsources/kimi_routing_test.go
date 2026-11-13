@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +84,7 @@ func TestKimiK3SourceRouting(t *testing.T) {
 						t.Fatalf("display name = %q", b.DisplayName)
 					}
 					if state.coding {
-						if b.Provider != models.ProviderKimiCoding || b.APIType != models.APITypeAnthropicMessages || b.APIModelName != "k3" || b.BaseURL != models.DefaultKimiCodingBaseURL || b.Source != subscription.label || b.ReleaseDate != modelReleaseDate(b.BaseURL, "k3") {
+						if b.Provider != models.ProviderKimiCoding || b.APIType != models.APITypeAnthropicMessages || b.APIModelName != "k3" || b.BaseURL != models.DefaultKimiCodingBaseURL || b.Source != "Kimi Code subscription" || b.ReleaseDate != modelReleaseDate(b.BaseURL, "k3") {
 							t.Fatalf("subscription metadata = %+v", b)
 						}
 						svc, ok := b.Service.(*ant.Service)
@@ -145,7 +144,7 @@ func TestKimiK3OverrideReservesLogicalID(t *testing.T) {
 func TestKimiK3ErrorsNeverUsePaidSource(t *testing.T) {
 	for _, status := range []int{0, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusTooManyRequests} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			store := &oauth.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+			store := subscriptionTestStore(t)
 			if status != 0 {
 				if err := store.Save("kimi", oauth.Token{AccessToken: "test-token", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 					t.Fatal(err)

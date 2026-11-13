@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,16 +20,126 @@ import (
 	"shelley.exe.dev/models"
 )
 
+func TestSubscriptionsRequireInjectedStore(t *testing.T) {
+	s := &Server{}
+	for _, tt := range []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"status", s.handleSubscriptions},
+		{"login", s.handleSubscriptionLoginStart},
+		{"logout", s.handleSubscriptionLogout},
+		{"import", s.handleSubscriptionImportLegacy},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.SetPathValue("provider", "anthropic")
+			rec := httptest.NewRecorder()
+			tt.handler(rec, req)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("unconfigured credentials: status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+type importReconciler struct {
+	oauth.Credentials
+	reconciled bool
+	err        error
+}
+
+func (s *importReconciler) ReconcileLocal(context.Context) error {
+	s.reconciled = true
+	return s.err
+}
+
+func TestSubscriptionLegacyImportAPI(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	data, err := json.Marshal(map[string]oauth.Token{"anthropic": {AccessToken: "legacy-access", RefreshToken: "legacy-refresh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &oauth.DBStore{DB: testDB(t)}
+	wrapper := &importReconciler{Credentials: store}
+	refreshed := false
+	mgr, err := models.NewManager(&models.Config{Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		db: store.DB, credentials: wrapper, llmManager: mgr, logger: slog.Default(),
+		refreshBuiltModels: func(context.Context) ([]models.Built, error) {
+			refreshed = true
+			return nil, nil
+		},
+	}
+	s.SetLegacyCredentialImport(&oauth.LegacyImport{Store: store, Path: path})
+	status := func(wantAvailable bool) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.handleSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "legacy-access") || strings.Contains(rec.Body.String(), "legacy-refresh") {
+			t.Fatalf("status leaked tokens or failed: %d", rec.Code)
+		}
+		var result subscriptionsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.LegacyImportAvailable != wantAvailable {
+			t.Fatalf("legacy_import_available=%v, want %v", result.LegacyImportAvailable, wantAvailable)
+		}
+	}
+	status(true)
+	if _, err := store.Load("anthropic"); err == nil {
+		t.Fatal("GET implicitly imported a credential")
+	}
+	rec := httptest.NewRecorder()
+	s.handleSubscriptionImportLegacy(rec, httptest.NewRequest(http.MethodPost, "/api/subscriptions/import-legacy", nil))
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"status":"ok"}` {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	if !refreshed || !wrapper.reconciled {
+		t.Fatal("import did not refresh models and reconcile fleet state")
+	}
+	if token, err := store.Load("anthropic"); err != nil || token.RefreshToken != "legacy-refresh" {
+		t.Fatal("import did not persist credentials", err)
+	}
+	status(false)
+	wrapper.err = errors.New("fleet publication failed")
+	refreshed = false
+	rec = httptest.NewRecorder()
+	s.handleSubscriptionImportLegacy(rec, httptest.NewRequest(http.MethodPost, "/api/subscriptions/import-legacy", nil))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "fleet publication failed") || refreshed {
+		t.Fatalf("fleet error was not propagated: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.Load("anthropic"); err != nil {
+		t.Fatal("partial fleet failure rolled back imported credentials", err)
+	}
+	// A second server/database can neither advertise nor import the file.
+	other := &oauth.DBStore{DB: testDB(t)}
+	s.SetCredentials(other)
+	s.SetLegacyCredentialImport(&oauth.LegacyImport{Store: other, Path: path})
+	status(false)
+	rec = httptest.NewRecorder()
+	s.handleSubscriptionImportLegacy(rec, httptest.NewRequest(http.MethodPost, "/api/subscriptions/import-legacy", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "another database") {
+		t.Fatalf("ownership conflict: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleSubscriptionsReportsCredentialStatus(t *testing.T) {
-	credPath := filepath.Join(t.TempDir(), "credentials.json")
-	store := &oauth.Store{Path: credPath}
+	store := &oauth.DBStore{DB: testDB(t)}
 	expiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	for _, provider := range []string{"anthropic", "kimi"} {
 		if err := store.Save(provider, oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: expiresAt}); err != nil {
 			t.Fatalf("save token: %v", err)
 		}
 	}
-	s := &Server{credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath}
+	s := &Server{credentials: store}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil)
 	rec := httptest.NewRecorder()
@@ -40,8 +152,8 @@ func TestHandleSubscriptionsReportsCredentialStatus(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.CredentialsPath != credPath {
-		t.Fatalf("credentials_path = %q, want %q", got.CredentialsPath, credPath)
+	if strings.Contains(rec.Body.String(), "credentials_path") {
+		t.Fatal("response exposes a legacy path")
 	}
 	if len(got.Providers) != 3 {
 		t.Fatalf("providers = %+v, want three providers", got.Providers)
@@ -57,11 +169,23 @@ func TestHandleSubscriptionsReportsCredentialStatus(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsSurfaceCredentialCorruption(t *testing.T) {
+	store := &oauth.DBStore{DB: testDB(t)}
+	if err := store.DB.SaveSubscriptionCredential(context.Background(), "anthropic", `{"expires_at":"secret-corrupt-token"}`); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{credentials: store}
+	rec := httptest.NewRecorder()
+	s.handleSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "secret-corrupt-token") || strings.Contains(rec.Body.String(), "not logged in") {
+		t.Fatalf("credential corruption was hidden or leaked: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing.T) {
 	for _, provider := range []string{"anthropic", "openai", "kimi"} {
 		t.Run(provider, func(t *testing.T) {
-			credPath := filepath.Join(t.TempDir(), "credentials.json")
-			store := &oauth.Store{Path: credPath}
+			store := &oauth.DBStore{DB: testDB(t)}
 			if err := store.Save(provider, oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 				t.Fatalf("save token: %v", err)
 			}
@@ -80,7 +204,7 @@ func TestHandleSubscriptionLogoutDeletesCredentialsAndRefreshesModels(t *testing
 				db:          testDB(t),
 				llmManager:  mgr,
 				logger:      slog.Default(),
-				credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath,
+				credentials: store,
 				refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 					refreshed = true
 					return []models.Built{{ID: "new-built", Provider: models.ProviderBuiltIn, Service: predictable.NewService()}}, nil
@@ -126,7 +250,7 @@ func TestValidSubscriptionProvider(t *testing.T) {
 }
 
 func TestHandleSubscriptionsLoggedOut(t *testing.T) {
-	s := &Server{credentialsPath: filepath.Join(t.TempDir(), "credentials.json")}
+	s := &Server{credentials: &oauth.DBStore{DB: testDB(t)}}
 	rec := httptest.NewRecorder()
 	s.handleSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
 	var got subscriptionsResponse
@@ -194,7 +318,6 @@ func TestKimiSubscriptionDeviceLogin(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				credPath := filepath.Join(t.TempDir(), "credentials.json")
 				requests := 0
 				client := http.DefaultClient
 				http.DefaultClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -222,8 +345,9 @@ func TestKimiSubscriptionDeviceLogin(t *testing.T) {
 					t.Fatal(err)
 				}
 				refreshed := false
+				store := &oauth.DBStore{DB: testDB(t)}
 				s := &Server{
-					credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath, subscriptionSessions: map[string]subscriptionLoginSession{},
+					credentials: store, subscriptionSessions: map[string]subscriptionLoginSession{},
 					db: testDB(t), llmManager: mgr, logger: slog.Default(),
 					refreshBuiltModels: func(context.Context) ([]models.Built, error) {
 						refreshed = true
@@ -286,7 +410,6 @@ func TestKimiSubscriptionDeviceLogin(t *testing.T) {
 				if remains == tt.done {
 					t.Fatalf("session remains=%v after done=%v", remains, tt.done)
 				}
-				store := &oauth.Store{Path: credPath}
 				tok, err := store.Load("kimi")
 				if tt.done {
 					if err != nil || tok.AccessToken != "secret-access" || tok.RefreshToken != "secret-refresh" {
@@ -310,7 +433,7 @@ func TestKimiSubscriptionStartFailure(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("upstream failure"))}, nil
 	})}
 	t.Cleanup(func() { http.DefaultClient = client })
-	s := &Server{credentialsPath: filepath.Join(t.TempDir(), "credentials.json"), subscriptionSessions: map[string]subscriptionLoginSession{}}
+	s := &Server{credentials: &oauth.DBStore{DB: testDB(t)}, subscriptionSessions: map[string]subscriptionLoginSession{}}
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("provider", "kimi")
 	rec := httptest.NewRecorder()
@@ -321,13 +444,12 @@ func TestKimiSubscriptionStartFailure(t *testing.T) {
 }
 
 func TestKimiSubscriptionExpiredStatus(t *testing.T) {
-	credPath := filepath.Join(t.TempDir(), "credentials.json")
-	store := &oauth.Store{Path: credPath}
+	store := &oauth.DBStore{DB: testDB(t)}
 	expiresAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	if err := store.Save("kimi", oauth.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: expiresAt}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{credentials: &oauth.Store{Path: credPath}, credentialsPath: credPath}
+	s := &Server{credentials: store}
 	rec := httptest.NewRecorder()
 	s.handleSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
 	var got subscriptionsResponse

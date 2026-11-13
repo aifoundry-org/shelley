@@ -296,7 +296,9 @@ func TranscriptionModels(sources []Source) []models.TranscriptionModel {
 			continue
 		}
 		conn := src.providers[models.ProviderOpenAI]
-		if conn == nil {
+		// A chat subscription does not provide an OpenAI transcription API
+		// credential, even when it also serves OpenAI-compatible chat models.
+		if conn == nil || conn.apiKey == "" {
 			continue
 		}
 		baseURL := cmp.Or(conn.baseURL, models.DefaultOpenAIBaseURL)
