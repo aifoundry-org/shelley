@@ -435,7 +435,11 @@ test("fleet follower with no local login takes over even when no models are avai
   await expect(account).toContainText("(0)");
   await expect(account).toContainText("no local sign-in required");
   await expect(account.getByRole("button", { name: "Sign out", exact: true })).toHaveCount(0);
-  await account.getByRole("button", { name: "Take over", exact: true }).click();
+  const takeOver = account.getByRole("button", { name: "Take over", exact: true });
+  await expect(takeOver).toBeVisible();
+  await expect(takeOver).not.toHaveClass(/p-button-text/);
+  await expect(takeOver).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await takeOver.click();
   const form = page.getByRole("dialog", { name: "Add Models", exact: true });
   await expect(form).toContainText("moves subscription ownership from node-a");
   await page.getByTestId("start-subscription-sign-in").click();

@@ -21,7 +21,6 @@
           v-else
           size="small"
           severity="secondary"
-          text
           :label="t(connections.follower(provider) ? 'subscriptionTakeOver' : 'subscriptionSignIn')"
           :disabled="connections.busy"
           @click="emit('connect', provider)"
