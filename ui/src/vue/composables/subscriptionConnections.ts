@@ -7,18 +7,24 @@ import {
 } from "../../services/api";
 import type { I18n } from "./i18n";
 
-// These are source labels, not new model IDs or OpenAI SIWC accounts.
+// Source keys are stable backend identifiers, separate from display labels.
+// None of these are OpenAI SIWC accounts.
 export const subscriptionProviders = [
-  { id: "anthropic", label: "Claude subscription" },
-  { id: "openai", label: "ChatGPT (Codex) subscription" },
-  { id: "kimi", label: "Kimi Code subscription" },
+  { id: "anthropic", source: "Claude subscription", label: "Claude" },
+  { id: "openai", source: "ChatGPT (Codex) subscription", label: "Codex" },
+  { id: "kimi", source: "Kimi Code subscription", label: "Kimi" },
 ] as const;
 
 export function subscriptionForSource(
   source: string,
   sourceID?: string,
 ): SubscriptionProvider | undefined {
-  return sourceID ? undefined : subscriptionProviders.find((p) => p.label === source)?.id;
+  return sourceID ? undefined : subscriptionProviders.find((p) => p.source === source)?.id;
+}
+
+export function subscriptionSourceLabel(source: string, sourceID?: string): string {
+  const provider = subscriptionForSource(source, sourceID);
+  return provider ? subscriptionProviders.find((p) => p.id === provider)!.label : source;
 }
 
 export function useSubscriptionConnections(

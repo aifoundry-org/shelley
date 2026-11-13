@@ -48,7 +48,7 @@
       label: disabledReason ? { 'aria-description': disabledReason } : {},
     }"
     filter
-    :filter-fields="['label', 'id', 'source']"
+    :filter-fields="['label', 'id', 'source', 'sourceLabel']"
     :filter-placeholder="t('searchModels')"
     :empty-filter-message="t('noModelsFound')"
     reset-filter-on-hide
@@ -150,7 +150,7 @@
             "
             class="model-picker-option-source"
             :title="isCustom(option) ? endpointHost(option.base_url) : undefined"
-            >{{ option.source }}</span
+            >{{ option.sourceLabel }}</span
           >
         </div>
         <span
@@ -411,7 +411,10 @@ import Select from "primevue/select";
 import { statusPickerDt } from "./statusPickerDt";
 import { prettyModelLabels } from "../../utils/modelNames";
 import { customModelBadge, endpointHost } from "../../utils/customModelBadge";
-import { subscriptionForSource } from "../composables/subscriptionConnections";
+import {
+  subscriptionForSource,
+  subscriptionSourceLabel,
+} from "../composables/subscriptionConnections";
 import { accountSuffixes } from "../../utils/providerAccounts";
 import { THINKING_LEVELS, type ThinkingLevel } from "./thinkingLevel";
 import { useI18n } from "../composables/i18n";
@@ -423,7 +426,7 @@ import { COMPACT_IN_PLACE_TOOL, compactNudgeChoices } from "./autoCompaction";
 import ChatGPTLogo from "./ChatGPTLogo.vue";
 import { CHATGPT_USAGE_URL } from "./chatgptPlan";
 
-type PickerModel = Model & { label: string };
+type PickerModel = Model & { label: string; sourceLabel: string };
 type PickerOption = PickerModel & {
   kind: "model" | "recent";
   pickerValue: string;
@@ -529,9 +532,10 @@ const decorated = computed<PickerModel[]>(() =>
   props.models
     .map((model) => {
       const suffix = model.source_id ? sourceSuffixes.value.get(model.source_id) : undefined;
+      const sourceLabel = subscriptionSourceLabel(model.source || "", model.source_id);
       return {
         ...model,
-        source: suffix ? `${model.source} ${suffix}` : model.source,
+        sourceLabel: suffix ? `${sourceLabel} ${suffix}` : sourceLabel,
         label: labels.value.get(model.id) || model.id,
       };
     })
@@ -658,9 +662,10 @@ const selectedBadge = computed(() => {
   if (props.triggerLabel) return null;
   const model = selectedModelObj.value;
   if (model?.source && subscriptionForSource(model.source, model.source_id)) {
+    const label = subscriptionSourceLabel(model.source, model.source_id);
     return {
-      label: model.source,
-      title: t("subscriptionOrigin").replace("{provider}", model.source),
+      label,
+      title: t("subscriptionOrigin").replace("{provider}", label),
     };
   }
   return customModelBadge(model);

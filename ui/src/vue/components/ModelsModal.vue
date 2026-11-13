@@ -389,6 +389,7 @@ import SubscriptionAccount from "./SubscriptionAccount.vue";
 import {
   subscriptionForSource,
   subscriptionProviders,
+  subscriptionSourceLabel,
   useSubscriptionConnections,
 } from "../composables/subscriptionConnections";
 import type { SubscriptionProvider } from "../../services/api";
@@ -508,8 +509,10 @@ interface TableRow {
   wireId: string;
 }
 
-function subscriptionGroup(row: TableRow): SubscriptionProvider | undefined {
-  return row.groupKey.startsWith("builtin:") ? subscriptionForSource(row.groupLabel) : undefined;
+function subscriptionGroup(row: Pick<TableRow, "groupKey">): SubscriptionProvider | undefined {
+  return row.groupKey.startsWith("builtin:")
+    ? subscriptionForSource(row.groupKey.slice("builtin:".length))
+    : undefined;
 }
 
 const tableRows = computed<TableRow[]>(() => {
@@ -527,7 +530,7 @@ const tableRows = computed<TableRow[]>(() => {
     const key = sourceID ? `provider:${sourceID}` : `builtin:${src}`;
     if (!groups.has(key)) {
       const provider = providersByID.get(sourceID);
-      const label = provider ? providerName(provider) : src;
+      const label = provider ? providerName(provider) : subscriptionSourceLabel(src, sourceID);
       const suffix = sourceID ? providerSuffixes.value.get(sourceID) : undefined;
       groups.set(key, { label: suffix ? `${label} ${suffix}` : label, models: [] });
     }
@@ -535,8 +538,8 @@ const tableRows = computed<TableRow[]>(() => {
   }
   // Keep fleet followers and connected accounts visible even without models.
   for (const p of subscriptionProviders) {
-    if (subscriptions.connected(p.id) && !groups.has(`builtin:${p.label}`)) {
-      groups.set(`builtin:${p.label}`, { label: p.label, models: [] });
+    if (subscriptions.connected(p.id) && !groups.has(`builtin:${p.source}`)) {
+      groups.set(`builtin:${p.source}`, { label: p.label, models: [] });
     }
   }
   // Signed-in ChatGPT plans lead, as in the model picker.
@@ -569,7 +572,7 @@ const tableRows = computed<TableRow[]>(() => {
     }
     // Endpoint shared by every model in the group renders once in the group
     // header; otherwise it stays per-row.
-    const subscription = groupKey.startsWith("builtin:") && subscriptionForSource(label);
+    const subscription = subscriptionGroup({ groupKey });
     const endpoints = new Set(group.map((m) => m.base_url || ""));
     const common = !subscription && endpoints.size === 1 ? (group[0].base_url ?? "") : "";
     for (const m of group) {

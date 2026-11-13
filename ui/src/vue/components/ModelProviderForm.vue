@@ -6,7 +6,11 @@
 
     <div class="form-group">
       <label>{{ t("providerApiFormat") }}</label>
-      <div class="provider-buttons" role="group" :aria-label="t('providerApiFormat')">
+      <div
+        class="provider-buttons connection-provider-buttons"
+        role="group"
+        :aria-label="t('providerApiFormat')"
+      >
         <button
           v-for="option in providerTypes"
           :key="option.value"
@@ -39,7 +43,8 @@
           :data-testid="`provider-subscription-${option.id}`"
           @click="selectSubscription(option.id)"
         >
-          {{ option.label }}
+          <SubscriptionIcon :provider="option.id" :size="14" />
+          <span>{{ option.label }}</span>
         </button>
       </div>
     </div>
@@ -153,6 +158,7 @@ import { useI18n } from "../composables/i18n";
 import { inputFieldDt } from "./configFieldDt";
 import ModelEndpointInput from "./ModelEndpointInput.vue";
 import ChatGPTLogo from "./ChatGPTLogo.vue";
+import SubscriptionIcon from "./SubscriptionIcon.vue";
 import ChatGPTSignInPending from "./ChatGPTSignInPending.vue";
 import SubscriptionSignIn from "./SubscriptionSignIn.vue";
 import {
@@ -342,3 +348,17 @@ async function save() {
   }
 }
 </script>
+
+<style scoped>
+/* Wrap connection choices without changing other forms' API-format rows. */
+.connection-provider-buttons {
+  flex-wrap: wrap;
+}
+.connection-provider-buttons .provider-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  flex: 1 0 auto;
+}
+</style>
