@@ -22,6 +22,7 @@
 import { computed } from "vue";
 import { prettyModelLabels } from "../../utils/modelNames";
 import { customModelBadge } from "../../utils/customModelBadge";
+import { subscriptionForSource } from "../composables/subscriptionConnections";
 import type { Model } from "../../types";
 
 const props = withDefaults(
@@ -60,7 +61,13 @@ const modelObj = computed(() => {
   );
 });
 
-const badge = computed(() => (isMixed.value ? null : customModelBadge(modelObj.value)));
+const badge = computed(() => {
+  if (isMixed.value) return null;
+  const model = modelObj.value;
+  return model?.source && subscriptionForSource(model.source, model.source_id)
+    ? { label: model.source, title: model.source }
+    : customModelBadge(model);
+});
 
 // A generation that ran more than one model (via a mid-generation /model
 // switch) shows "Mixed"; the full list is on hover. Otherwise show the single

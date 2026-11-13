@@ -15,15 +15,22 @@
           :aria-pressed="providerMode"
           :disabled="providerSaving"
           @click="addMode = 'provider'"
-        >{{ t("addProvider") }}</button>
+        >
+          {{ t("addProvider") }}
+        </button>
         <button
           type="button"
           data-testid="model-mode-single"
           :class="['toggle-btn', { selected: !providerMode }]"
           :aria-pressed="!providerMode"
           :disabled="providerSaving"
-          @click="addMode = 'single'"
-        >{{ t("addModelSingle") }}</button>
+          @click="
+            subscriptions.cancel();
+            addMode = 'single';
+          "
+        >
+          {{ t("addModelSingle") }}
+        </button>
       </div>
     </div>
     <ModelProviderForm
@@ -31,6 +38,8 @@
       v-if="isOpen && !editModel"
       v-show="providerMode"
       :provider="editProvider"
+      :subscriptions="subscriptions"
+      :subscription-provider="subscriptionProvider"
       :chatgpt="chatgpt"
       :chatgpt-busy="chatgptBusy"
       :chatgpt-pending="chatgptPending"
@@ -107,7 +116,12 @@
           :dt="inputFieldDt"
         />
         <div v-if="collision" class="form-hint form-hint-warning" role="status">
-          {{ t("displayNameCollisionWarning").replace("{name}", collision.display_name || collision.id) }}
+          {{
+            t("displayNameCollisionWarning").replace(
+              "{name}",
+              collision.display_name || collision.id,
+            )
+          }}
         </div>
       </div>
 
@@ -281,6 +295,8 @@ import Select from "primevue/select";
 import { inputFieldDt, selectFieldDt } from "./configFieldDt";
 import Modal from "./Modal.vue";
 import ModelProviderForm from "./ModelProviderForm.vue";
+import type { SubscriptionConnections } from "../composables/subscriptionConnections";
+import type { SubscriptionProvider } from "../../services/api";
 import ModelEndpointInput from "./ModelEndpointInput.vue";
 import { findDisplayNameCollision } from "../../utils/modelNameCollision";
 import { useI18n } from "../composables/i18n";
@@ -311,6 +327,8 @@ import {
 const props = withDefaults(
   defineProps<{
     isOpen: boolean;
+    subscriptions: SubscriptionConnections;
+    subscriptionProvider: SubscriptionProvider | null;
     editModel: CustomModel | null;
     editProvider: ModelProviderConnection | null;
     existingModels?: AvailableModel[];
@@ -337,7 +355,15 @@ function requestClose() {
   if (!providerSaving.value) emit("close");
 }
 const addMode = ref<"provider" | "single">("provider");
-const providerMode = computed(() => !!props.editProvider || (!props.editModel && addMode.value === "provider"));
+const providerMode = computed(
+  () => !!props.editProvider || (!props.editModel && addMode.value === "provider"),
+);
+
+// Read the current visible selection at completion time, not at sign-in start.
+const usingChatGPT = computed(
+  () => props.isOpen && providerMode.value && !!providerForm.value?.usingChatGPT,
+);
+defineExpose({ usingChatGPT });
 
 const { t } = useI18n();
 

@@ -1,6 +1,32 @@
 export type Locale = "en" | "ja" | "fr" | "ru" | "es" | "zh-CN" | "zh-TW" | "upgoer5" | "vi";
 
 export interface TranslationKeys {
+  // Subscription connections
+  subscriptionConnectedAfterError: string;
+  subscriptionSignIn: string;
+  subscriptionSignOut: string;
+  subscriptionTakeOver: string;
+  subscriptionLocal: string;
+  subscriptionFleet: string;
+  subscriptionFollowing: string;
+  subscriptionTakeOverHint: string;
+  subscriptionFallback: string;
+  subscriptionUnofficial: string;
+  subscriptionCodexNotice: string;
+  subscriptionKimiNotice: string;
+  subscriptionOpenBrowser: string;
+  subscriptionWaiting: string;
+  subscriptionPasteCode: string;
+  subscriptionDeviceCode: string;
+  subscriptionApproved: string;
+  subscriptionComplete: string;
+  subscriptionNotApproved: string;
+  subscriptionInvalidSession: string;
+  subscriptionImport: string;
+  subscriptionImportHint: string;
+  subscriptionImporting: string;
+  subscriptionOrigin: string;
+
   // App-level
   loading: string;
   hookFailureTitle: string;

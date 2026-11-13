@@ -11,8 +11,8 @@
           v-for="option in providerTypes"
           :key="option.value"
           type="button"
-          :class="`provider-btn ${!useChatGPT && providerType === option.value ? 'selected' : ''}`"
-          :aria-pressed="!useChatGPT && providerType === option.value"
+          :class="`provider-btn ${!useChatGPT && !selectedSubscription && providerType === option.value ? 'selected' : ''}`"
+          :aria-pressed="!useChatGPT && !selectedSubscription && providerType === option.value"
           :aria-label="PROVIDER_LABELS[option.value]"
           @click="changeProvider(option.value)"
         >
@@ -25,15 +25,32 @@
           :class="`provider-btn provider-btn-chatgpt ${useChatGPT ? 'selected' : ''}`"
           :aria-pressed="useChatGPT"
           data-testid="provider-chatgpt"
-          @click="useChatGPT = true"
+          @click="selectChatGPT"
         >
           <ChatGPTLogo :size="14" />
           <span>ChatGPT</span>
         </button>
+        <button
+          v-for="option in !provider ? subscriptionProviders : []"
+          :key="option.id"
+          type="button"
+          :class="['provider-btn', { selected: selectedSubscription === option.id }]"
+          :aria-pressed="selectedSubscription === option.id"
+          :data-testid="`provider-subscription-${option.id}`"
+          @click="selectSubscription(option.id)"
+        >
+          {{ option.label }}
+        </button>
       </div>
     </div>
 
-    <template v-if="useChatGPT">
+    <SubscriptionSignIn
+      v-if="selectedSubscription"
+      :provider="selectedSubscription"
+      :connections="subscriptions"
+      @close="emit('close')"
+    />
+    <template v-else-if="useChatGPT">
       <ChatGPTSignInPending
         v-if="chatgptPending"
         :pending="chatgptPending"
@@ -137,6 +154,12 @@ import { inputFieldDt } from "./configFieldDt";
 import ModelEndpointInput from "./ModelEndpointInput.vue";
 import ChatGPTLogo from "./ChatGPTLogo.vue";
 import ChatGPTSignInPending from "./ChatGPTSignInPending.vue";
+import SubscriptionSignIn from "./SubscriptionSignIn.vue";
+import {
+  subscriptionProviders,
+  type SubscriptionConnections,
+} from "../composables/subscriptionConnections";
+import type { SubscriptionProvider } from "../../services/api";
 import { endpointPresetsFor, PROVIDER_LABELS, PROVIDER_TAB_LABELS } from "./customModelConstants";
 import {
   modelProvidersApi,
@@ -148,6 +171,8 @@ import {
 
 const props = defineProps<{
   provider: ModelProviderConnection | null;
+  subscriptions: SubscriptionConnections;
+  subscriptionProvider: SubscriptionProvider | null;
   // chatgpt offers ChatGPT, which signs in, beside the API key providers.
   chatgpt?: boolean;
   chatgptBusy?: boolean;
@@ -162,13 +187,23 @@ const emit = defineEmits<{
   (e: "chatgptCancel"): void;
 }>();
 const useChatGPT = ref(false);
-// A sign-in in progress shows under ChatGPT when the dialog reopens.
+const selectedSubscription = ref<SubscriptionProvider | null>(props.subscriptionProvider);
 watch(
-  () => props.chatgptPending,
-  (pending) => {
-    if (pending) useChatGPT.value = true;
+  () => props.subscriptionProvider,
+  (provider) => {
+    selectedSubscription.value = provider;
   },
 );
+function selectSubscription(provider: SubscriptionProvider) {
+  if (selectedSubscription.value !== provider) props.subscriptions.cancel();
+  useChatGPT.value = false;
+  selectedSubscription.value = provider;
+}
+function selectChatGPT() {
+  props.subscriptions.cancel();
+  selectedSubscription.value = null;
+  useChatGPT.value = true;
+}
 const { t } = useI18n();
 
 const endpoints: Record<ModelProviderType, string> = {
@@ -190,14 +225,24 @@ const endpointPresets = computed(() => endpointPresetsFor(providerType.value, tr
 const displayName = ref("");
 const apiKey = ref("");
 const saving = ref(false);
-defineExpose({ saving });
+const usingChatGPT = computed(() => useChatGPT.value && !selectedSubscription.value);
+defineExpose({ saving, usingChatGPT });
 const checking = ref(false);
 const checkResult = ref<{ success: boolean; message: string } | null>(null);
-const canCheck = computed(() => !!endpoint.value.trim() && (!!props.provider || !!apiKey.value.trim()));
-const discoveryInput = computed(() => JSON.stringify([
-  props.provider?.provider_id, providerType.value, endpoint.value.trim(), apiKey.value,
-]));
-watch(discoveryInput, () => { checkResult.value = null; });
+const canCheck = computed(
+  () => !!endpoint.value.trim() && (!!props.provider || !!apiKey.value.trim()),
+);
+const discoveryInput = computed(() =>
+  JSON.stringify([
+    props.provider?.provider_id,
+    providerType.value,
+    endpoint.value.trim(),
+    apiKey.value,
+  ]),
+);
+watch(discoveryInput, () => {
+  checkResult.value = null;
+});
 const error = ref<string | null>(null);
 
 function reset() {
@@ -207,12 +252,16 @@ function reset() {
   apiKey.value = "";
   error.value = null;
   checkResult.value = null;
-  useChatGPT.value = !props.provider && !!props.chatgptPending;
+  selectedSubscription.value = props.provider ? null : props.subscriptionProvider;
+  // Restore pending SIWC on reopen, never when a late response arrives.
+  useChatGPT.value = !props.provider && !selectedSubscription.value && !!props.chatgptPending;
 }
 
 watch(() => props.provider, reset, { immediate: true });
 
 function changeProvider(value: ModelProviderType) {
+  props.subscriptions.cancel();
+  selectedSubscription.value = null;
   useChatGPT.value = false;
   const wasPreset = endpointPresets.value.some((preset) => preset.url === endpoint.value);
   providerType.value = value;
@@ -231,7 +280,14 @@ function providerInput(): ModelProviderInput {
 }
 
 async function checkModels() {
-  if (saving.value || checking.value || !canCheck.value) return;
+  if (
+    selectedSubscription.value ||
+    useChatGPT.value ||
+    saving.value ||
+    checking.value ||
+    !canCheck.value
+  )
+    return;
   const signature = discoveryInput.value;
   checking.value = true;
   checkResult.value = null;
@@ -241,14 +297,21 @@ async function checkModels() {
     if (signature !== discoveryInput.value) return;
     checkResult.value = {
       success: models.length > 0,
-      message: models.length === 0
-        ? t("providerNoModels")
-        : t("providerChatModelCount").replace("{count}", String(models.length)) +
-          `: ${models.slice(0, 5).map((model) => model.id).join(", ")}${models.length > 5 ? ", …" : ""}`,
+      message:
+        models.length === 0
+          ? t("providerNoModels")
+          : t("providerChatModelCount").replace("{count}", String(models.length)) +
+            `: ${models
+              .slice(0, 5)
+              .map((model) => model.id)
+              .join(", ")}${models.length > 5 ? ", …" : ""}`,
     };
   } catch (err) {
     if (signature === discoveryInput.value) {
-      checkResult.value = { success: false, message: err instanceof Error ? err.message : String(err) };
+      checkResult.value = {
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
     }
   } finally {
     checking.value = false;
@@ -256,7 +319,14 @@ async function checkModels() {
 }
 
 async function save() {
-  if (saving.value || checking.value || !canCheck.value) return;
+  if (
+    selectedSubscription.value ||
+    useChatGPT.value ||
+    saving.value ||
+    checking.value ||
+    !canCheck.value
+  )
+    return;
   saving.value = true;
   error.value = null;
   const input = providerInput();

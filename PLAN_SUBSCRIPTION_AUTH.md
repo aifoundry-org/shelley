@@ -1,5 +1,10 @@
 # Plan: Subscription (OAuth) auth for AI providers
 
+This is a historical implementation plan. For the current credential storage
+and UI, see **Provider authentication** in `ARCHITECTURE.md` and the Kimi sign-in
+instructions below; the original CLI commands and file store in the plan are no
+longer the active interface.
+
 Goal: let Shelley authenticate to AI providers using **subscription**
 credentials (Claude Pro/Max OAuth, and later ChatGPT/Codex OAuth) instead of
 only inference API keys.
@@ -176,14 +181,11 @@ third-party OAuth integration, not a claim of official Shelley client approval.
 
 ### Sign in and test
 
-- In the conversation overflow menu, expand **Subscription accounts**, choose
-  **Kimi Code → Login**, and open the displayed verification link.
+- Open **Manage Models → Add Models → Connect a provider**, choose **Kimi
+  Code**, and open the displayed verification link.
 - Sign in directly on Kimi's website and approve the device. Return to Shelley
   and click **I approved it**. Never paste passwords, access tokens, or refresh tokens
   into a conversation.
-- Alternatively, run `shelley login kimi`; it waits for browser approval.
-  `shelley login-status kimi` checks stored status and `shelley logout kimi`
-  removes the locally stored credentials.
 - After approval, select a Kimi Code subscription model and test a short reply
   followed by a harmless tool call. These requests consume subscription quota.
 - The account needs Kimi Code access. Authentication success alone does not
@@ -191,9 +193,11 @@ third-party OAuth integration, not a claim of official Shelley client approval.
   client. Provider errors must be surfaced; do not impersonate Kimi CLI or
   Claude Code to bypass client restrictions.
 
-Credentials use the existing owner-only Shelley credential store under
-`$XDG_CONFIG_HOME/shelley/credentials.json` (normally
-`~/.config/shelley/credentials.json`). Access tokens refresh automatically.
+Credentials are stored in the Shelley database. If this machine has credentials
+from the old file store, **Manage Models** offers a one-time explicit import
+into the selected database. Stop older Shelley instances using that file before
+importing; the retained file will not receive later token rotations. Access
+tokens refresh automatically.
 Disconnecting removes local credentials; it does not revoke the provider-side
 OAuth grant. Use Kimi's account controls for provider-side revocation.
 
