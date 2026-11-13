@@ -1747,17 +1747,15 @@ func (cm *ConversationManager) feedQueued(ctx context.Context, queued []db.Queue
 	cm.mu.Lock()
 	loopInstance := cm.loop
 	warmModelID := cm.modelID
-	warmIdleSaved := loopInstance != nil && !cm.agentWorking && cm.loopSourceID != ""
+	warmIdleSnapshot := loopInstance != nil && !cm.agentWorking && cm.resolveModelService != nil
 	cm.mu.Unlock()
 
 	cm.logger.Info("Draining queued messages", "count", len(queued))
-	if warmIdleSaved && warmModelID != "" {
-		// A warm idle loop bypasses the cold-start path, but a saved route may
-		// have had its key rotated or been deleted since the loop was built.
-		// Reconcile before anything is recorded or dequeued: a rotated route
-		// gets a fresh loop; a deleted one fails here and leaves the queue
-		// intact. A running turn is never interrupted, and routes without a
-		// saved source keep their existing behavior.
+	if warmIdleSnapshot && warmModelID != "" {
+		// Built-in connections can change too (subscription login/logout),
+		// without having a saved SourceID. Reconcile before recording or
+		// dequeuing anything, so resolution/rebuild failures leave the queue
+		// intact. A running turn keeps its existing connection.
 		svc, err := cm.server.llmManager.GetService(warmModelID)
 		if err != nil {
 			return fmt.Errorf("failed to get LLM service %q: %w", warmModelID, err)
@@ -2385,8 +2383,9 @@ func (cm *ConversationManager) ensureLoopLocked(service llm.Service, modelID str
 		return fmt.Errorf("%w: conversation already uses model %s; requested %s", errConversationModelMismatch, existingModel, modelID)
 	}
 	if cm.loop != nil {
-		if !cm.agentWorking && cm.loopSourceID != "" &&
-			(cm.loopSourceID != sourceID || cm.loopSourceRevision != sourceRevision) {
+		connectionChanged := cm.loopSourceRevision != sourceRevision ||
+			(cm.loopSourceID != "" && cm.loopSourceID != sourceID)
+		if !cm.agentWorking && connectionChanged {
 			// Same-model refresh: the conversation's account must survive a
 			// failed rebuild, or queued work and retries would fall back to
 			// the host default.
