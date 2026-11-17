@@ -36,7 +36,7 @@ type fakeResponses struct {
 
 func (f *fakeResponses) service() *oai.ResponsesService {
 	return &oai.ResponsesService{
-		APIKey: "test-key", Model: oai.Model{ModelName: f.provider.model}, ModelURL: f.provider.url,
+		Auth: oai.APIKeyAuth{Key: "test-key"}, Model: oai.Model{ModelName: f.provider.model}, ModelURL: f.provider.url,
 		ProviderName: f.provider.provider, MaxTokens: 100, Backoff: []time.Duration{0},
 		HTTPC: &http.Client{Transport: f},
 	}

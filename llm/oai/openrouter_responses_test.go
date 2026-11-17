@@ -42,7 +42,7 @@ func openRouterResponsesService(t *testing.T, provider, model string, handle fun
 	t.Helper()
 	calls := 0
 	return &ResponsesService{
-		APIKey: "test-key", Model: modelForTest(model), ModelURL: openRouterResponsesURL,
+		Auth: APIKeyAuth{Key: "test-key"}, Model: modelForTest(model), ModelURL: openRouterResponsesURL,
 		ProviderName: provider, MaxTokens: 100, Backoff: []time.Duration{0},
 		HTTPC: &http.Client{Transport: openRouterResponsesTransport(func(r *http.Request) (*http.Response, error) {
 			if r.URL.String() != openRouterResponsesURL+"/responses" || r.Method != http.MethodPost {
@@ -558,7 +558,7 @@ func TestOpenRouterResponsesGeminiFormatCannotReplayToNativeProviders(t *testing
 			t.Run(route.provider+"/"+string(replay), func(t *testing.T) {
 				var input []map[string]any
 				svc := &ResponsesService{
-					APIKey: "test-key", Model: modelForTest(route.model), ModelURL: route.endpoint,
+					Auth: APIKeyAuth{Key: "test-key"}, Model: modelForTest(route.model), ModelURL: route.endpoint,
 					ProviderName: route.provider, ReasoningReplay: replay, Backoff: []time.Duration{0},
 					HTTPC: &http.Client{Transport: openRouterResponsesTransport(func(r *http.Request) (*http.Response, error) {
 						if r.URL.String() != route.endpoint+"/responses" {
