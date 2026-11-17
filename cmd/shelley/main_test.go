@@ -587,7 +587,7 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 				integrationModel("gpt-6-luna", "openai", "openai_responses", "managed"),
 			}},
 			{Name: "llm-sub-oai", Host: "llm-sub-oai.int.exe.xyz", URL: "https://llm-sub-oai.int.exe.xyz", Models: []modelsources.IntegrationModel{
-				integrationModel("gpt-6-astra", "openai", "openai_responses", "chatgpt"),
+				integrationModel("gpt-6.2-astra", "openai", "openai_responses", "chatgpt"),
 				integrationModel("gpt-6-luna", "openai", "openai_responses", "chatgpt"),
 			}},
 		}}
@@ -613,8 +613,8 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manager.GetModelInfo("gpt-6-astra@llm-sub-oai") == nil {
-		t.Fatal("exe.dev ChatGPT route gpt-6-astra@llm-sub-oai was not built; the test no longer exercises duplicates")
+	if manager.GetModelInfo("gpt-6.2-astra@llm-sub-oai") == nil {
+		t.Fatal("exe.dev ChatGPT route gpt-6.2-astra@llm-sub-oai was not built; the test no longer exercises duplicates")
 	}
 
 	subscriptionFor := func(id string) string {
@@ -624,7 +624,7 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 		return "ChatGPT (Codex) subscription"
 	}
 	toolModels := setupToolSetConfig(nil, manager)
-	for _, parent := range []string{"claude-opus-5.5", "gpt-6-astra"} {
+	for _, parent := range []string{"claude-opus-5.5", "gpt-6.2-astra"} {
 		if src := manager.GetModelInfo(parent).Source; src != subscriptionFor(parent) {
 			t.Fatalf("parent %s source = %q, want %q", parent, src, subscriptionFor(parent))
 		}
@@ -632,7 +632,7 @@ func TestToolModelsRouteToLocalSubscription(t *testing.T) {
 		for _, m := range toolModels.BuildAvailableModels(parent) {
 			routes[m.Name] = m.ID
 		}
-		for _, name := range []string{"claude-opus-5.5", "gpt-6-astra", "gpt-6-luna"} {
+		for _, name := range []string{"claude-opus-5.5", "gpt-6.2-astra", "gpt-6-luna"} {
 			id, ok := routes[name]
 			if !ok {
 				t.Fatalf("parent %s: %s missing from tool models %v", parent, name, routes)
